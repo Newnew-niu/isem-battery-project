@@ -1,0 +1,518 @@
+<title>Wind, Price &amp; Storage in I-SEM</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,500..800&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: one reading column (~66ch) with full-width figure rows; a gate-closure timeline
+   strip is the signature element. Cool Atlantic neutrals, a deep teal accent, amber for peaks. */
+:root {
+  --bg: #f4f7f7;
+  --surface: #fbfcfc;
+  --ink: #0e1c24;
+  --ink-2: #44555f;
+  --muted: #7a8a92;
+  --rule: #d9e2e4;
+  --accent: #0b6b73;
+  --accent-soft: #d7eced;
+  --amber: #b8641a;
+  --s1: #2a78d6; --s2: #eb6834; --s3: #1baf7a; --neutral: #b9c4c8; --s1-soft: #cfe1f7;
+  --grid: #e3eaec; --axis: #b9c4c8;
+  --f-display: "Archivo", "Arial Narrow", "Helvetica Neue", Arial, sans-serif;
+  --f-body: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+  --f-mono: "IBM Plex Mono", ui-monospace, "Cascadia Mono", Consolas, monospace;
+  --step-0: 1rem; --step-1: 1.2rem; --step-2: 1.55rem; --step-3: 2.1rem; --step-4: clamp(2.3rem, 5.6vw, 3.6rem);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0d1418; --surface: #121b20; --ink: #e5edef; --ink-2: #a9b8be; --muted: #7d8f96;
+    --rule: #24323a; --accent: #4fb9c0; --accent-soft: #15343a; --amber: #e69a52;
+    --s1: #3987e5; --s2: #d95926; --s3: #199e70; --neutral: #4a5a62; --s1-soft: #1c3554;
+    --grid: #1e2a31; --axis: #3a4a52; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0d1418; --surface: #121b20; --ink: #e5edef; --ink-2: #a9b8be; --muted: #7d8f96;
+  --rule: #24323a; --accent: #4fb9c0; --accent-soft: #15343a; --amber: #e69a52;
+  --s1: #3987e5; --s2: #d95926; --s3: #199e70; --neutral: #4a5a62; --s1-soft: #1c3554;
+  --grid: #1e2a31; --axis: #3a4a52; color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body {
+  background: var(--bg); color: var(--ink); font-family: var(--f-body); font-size: var(--step-0);
+  line-height: 1.6; padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px)); padding-block: 0 64px;
+}
+.wrap { max-width: 1060px; margin: 0 auto; }
+.prose { max-width: 68ch; }
+h1, h2, h3 { font-family: var(--f-display); text-wrap: balance; margin: 0; line-height: 1.08; }
+h1 { font-size: var(--step-4); font-weight: 800; font-stretch: 88%; letter-spacing: -0.01em; }
+h2 { font-size: var(--step-3); font-weight: 750; font-stretch: 92%; }
+h3 { font-size: var(--step-1); font-weight: 700; font-stretch: 100%; }
+p { margin: 0; }
+a { color: var(--accent); text-underline-offset: 3px; }
+a:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 2px; }
+.eyebrow { font-family: var(--f-mono); font-size: 0.78rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--accent); }
+.num { font-family: var(--f-mono); font-variant-numeric: tabular-nums; }
+
+/* masthead */
+.mast { display: flex; justify-content: space-between; align-items: center; gap: 16px; flex-wrap: wrap;
+  padding-block: 22px; border-bottom: 1px solid var(--rule); font-size: 0.85rem; color: var(--ink-2); }
+.mast b { font-family: var(--f-display); font-stretch: 100%; color: var(--ink); font-size: 0.95rem; letter-spacing: 0.02em; }
+.hero { padding-block: 56px 32px; display: grid; gap: 22px; }
+.hero .lede { font-size: var(--step-1); color: var(--ink-2); max-width: 60ch; }
+.kpis { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 1px; background: var(--rule);
+  border: 1px solid var(--rule); margin-top: 8px; }
+.kpi { background: var(--surface); padding: 18px 18px 16px; display: grid; gap: 4px; align-content: start; }
+.kpi .v { font-family: var(--f-display); font-weight: 750; font-stretch: 90%; font-size: var(--step-3); line-height: 1; }
+.kpi .v small { font-family: var(--f-mono); font-size: 0.8rem; font-weight: 400; color: var(--ink-2); margin-left: 4px; }
+.kpi .l { font-size: 0.86rem; color: var(--ink-2); }
+
+/* sections */
+section { padding-block: 56px 8px; border-top: 1px solid var(--rule); margin-top: 40px; display: grid; gap: 22px; }
+.head { display: grid; gap: 10px; }
+.head p { color: var(--ink-2); max-width: 68ch; }
+.figrow { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 22px; }
+.fig { background: var(--surface); border: 1px solid var(--rule); padding: 18px 18px 12px; display: grid; gap: 6px; min-width: 0; }
+.fig h3 { font-size: 1.02rem; }
+.fig .sub { font-size: 0.8rem; color: var(--muted); }
+.fig svg { width: 100%; height: auto; display: block; overflow: visible; }
+.fig .take { font-size: 0.9rem; color: var(--ink-2); border-top: 1px solid var(--rule); padding-top: 8px; margin-top: 4px; }
+.legend { display: flex; gap: 14px; flex-wrap: wrap; font-size: 0.78rem; color: var(--ink-2); }
+.legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; }
+ul.points { margin: 0; padding-left: 1.1em; display: grid; gap: 6px; max-width: 68ch; }
+ul.points li::marker { color: var(--accent); }
+
+/* gate-closure timeline */
+.timeline { background: var(--surface); border: 1px solid var(--rule); padding: 20px 18px 16px; overflow-x: auto; }
+.tl { position: relative; min-width: 640px; height: 120px; }
+.tl .bar { position: absolute; top: 52px; left: 0; right: 0; height: 2px; background: var(--axis); }
+.tl .zone { position: absolute; top: 44px; height: 18px; border-radius: 2px; }
+.tl .known { background: var(--accent-soft); }
+.tl .deliver { background: color-mix(in srgb, var(--amber) 22%, transparent); }
+.tl .mark { position: absolute; top: 34px; width: 2px; height: 38px; background: var(--ink); }
+.tl .mark.gate { background: var(--accent); width: 3px; }
+.tl .lab { position: absolute; font-size: 0.78rem; color: var(--ink-2); transform: translateX(-50%); white-space: nowrap; text-align: center; line-height: 1.3; }
+.tl .lab b { color: var(--ink); font-family: var(--f-mono); font-weight: 500; }
+.tl .top { top: 0; } .tl .bot { top: 80px; }
+.allow { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; margin-top: 10px; font-size: 0.88rem; }
+.allow div { padding: 10px 12px; border-left: 3px solid var(--accent); background: var(--bg); }
+.allow div.no { border-left-color: var(--amber); }
+.allow b { display: block; font-family: var(--f-mono); font-size: 0.74rem; letter-spacing: 0.06em; text-transform: uppercase; margin-bottom: 2px; }
+
+/* tables */
+.tbl { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; font-size: 0.9rem; }
+th, td { padding: 8px 10px; text-align: right; border-bottom: 1px solid var(--rule); font-variant-numeric: tabular-nums; }
+th:first-child, td:first-child { text-align: left; }
+th { font-family: var(--f-mono); font-size: 0.74rem; letter-spacing: 0.05em; text-transform: uppercase; color: var(--ink-2); font-weight: 500; }
+td.heat { font-family: var(--f-mono); }
+
+/* the integrity story */
+.story { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); gap: 22px; align-items: start; }
+.story ol { margin: 0; padding-left: 1.2em; display: grid; gap: 10px; }
+.story ol li::marker { font-family: var(--f-mono); color: var(--accent); }
+.ba { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1px; background: var(--rule); border: 1px solid var(--rule); }
+.ba div { background: var(--surface); padding: 14px; }
+.ba .k { font-size: 0.78rem; color: var(--ink-2); }
+.ba .v { font-family: var(--f-display); font-weight: 750; font-stretch: 90%; font-size: var(--step-2); }
+.ba .before .v { color: var(--muted); text-decoration: line-through; text-decoration-thickness: 2px; }
+
+.cols3 { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 22px; }
+.cols3 > div { display: grid; gap: 6px; align-content: start; min-width: 0; }
+.cols3 p { font-size: 0.92rem; color: var(--ink-2); }
+footer { margin-top: 56px; padding-top: 18px; border-top: 1px solid var(--rule); font-size: 0.8rem; color: var(--muted); display: grid; gap: 6px; }
+
+/* tooltip */
+#tip { position: fixed; pointer-events: none; z-index: 20; background: var(--ink); color: var(--bg); font-family: var(--f-mono);
+  font-size: 0.76rem; padding: 6px 8px; border-radius: 3px; line-height: 1.4; max-width: 240px; }
+.hit { cursor: default; }
+.hit:hover { opacity: 0.85; }
+
+@media (max-width: 820px) {
+  .kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .figrow, .story, .cols3, .allow { grid-template-columns: minmax(0, 1fr); }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .hero > * { animation: rise .6s ease-out both; }
+  .hero > *:nth-child(2) { animation-delay: .06s; } .hero > *:nth-child(3) { animation-delay: .12s; } .hero > *:nth-child(4) { animation-delay: .18s; }
+  @keyframes rise { from { transform: translateY(8px); } to { transform: none; } }
+}
+</style>
+
+<div class="wrap">
+  <div class="mast">
+    <b>I-SEM DAY-AHEAD &middot; CASE STUDY</b>
+    <span>Faye &middot; MSc Social Data Science (UCD) &middot; Trading days 1 Oct 2024 &ndash; 30 Sep 2026</span>
+  </div>
+
+  <header class="hero">
+    <span class="eyebrow">Irish Single Electricity Market &middot; DAM &middot; EUR/MWh</span>
+    <h1>Wind, Price &amp; Storage in I-SEM</h1>
+    <p class="lede">Two years of Irish day-ahead prices; a forecast built only from what a trader
+      knows at the 11:00 gate closure; and what that forecast is worth to a 1&nbsp;MW / 2&nbsp;MWh
+      battery. Everything runs from public data, through a DuckDB/SQL layer, in one command.</p>
+    <div class="kpis" id="kpis"></div>
+  </header>
+
+  <section id="market">
+    <div class="head">
+      <span class="eyebrow">The market</span>
+      <h2>Gas sets the level. Wind sets the shape.</h2>
+      <p>Monthly I-SEM prices move almost one-for-one with GB (correlation <span class="num" data-k="corr_gb_monthly"></span>), a market where gas
+        sets the price in most hours. <em>Within</em> a month, wind decides which hours are cheap. Each extra
+        10 points of wind penetration lowers the price by about <span class="num" data-k="slope10"></span>&nbsp;EUR/MWh.</p>
+    </div>
+    <div class="figrow">
+      <div class="fig">
+        <h3>Price vs wind penetration</h3>
+        <span class="sub">Price minus monthly mean, by ROI wind / ROI load band. Box = 25th&ndash;75th percentile, line = 10th&ndash;90th, tick = median.</span>
+        <svg id="c-merit" viewBox="0 0 520 300" role="img" aria-label="Box plot of price deviation by wind penetration band"></svg>
+        <p class="take">From <b class="num" data-k="band_lo"></b> in the calmest hours to <b class="num" data-k="band_hi"></b> above 60% wind: a 64&nbsp;EUR/MWh swing.</p>
+      </div>
+      <div class="fig">
+        <h3>The merit order is convex</h3>
+        <span class="sub">Median price minus monthly mean, by ROI net load (load &minus; wind), 250&nbsp;MW bins.</span>
+        <svg id="c-netload" viewBox="0 0 520 300" role="img" aria-label="Line chart of price deviation by net load"></svg>
+        <p class="take">The last 1,500&nbsp;MW of net load moves the price more than the first 3,500&nbsp;MW. Expensive peaking plant sets the high end.</p>
+      </div>
+    </div>
+    <div class="figrow">
+      <div class="fig">
+        <h3>Winter</h3>
+        <span class="sub">Mean price by hour (Irish local time)</span>
+        <div class="legend"><span><i style="background:var(--s1)"></i>Weekday</span><span><i style="background:var(--s2)"></i>Weekend</span></div>
+        <svg id="c-winter" viewBox="0 0 520 240" role="img" aria-label="Winter daily price profile"></svg>
+      </div>
+      <div class="fig">
+        <h3>Summer</h3>
+        <span class="sub">Mean price by hour (Irish local time)</span>
+        <div class="legend"><span><i style="background:var(--s1)"></i>Weekday</span><span><i style="background:var(--s2)"></i>Weekend</span></div>
+        <svg id="c-summer" viewBox="0 0 520 240" role="img" aria-label="Summer daily price profile"></svg>
+      </div>
+    </div>
+    <ul class="points">
+      <li><b>Evening is the expensive hour all year.</b> Weekday prices peak at 17:00&ndash;20:00. The summer low moves to 14:00, which fits growing solar output (untested; the dataset has no solar series).</li>
+      <li><b>Weekends lose the morning peak</b> and average about 21&nbsp;EUR/MWh less.</li>
+      <li><b>Near-zero prices are rare:</b> <span class="num" data-k="low_hours"></span> hours (<span class="num" data-k="low_share"></span>) at or below 5&nbsp;EUR/MWh. Even above 60% wind penetration only <span class="num" data-k="p_low_ws60"></span> of hours price that low. Surplus wind is exported or dispatched down rather than crashing the price.</li>
+      <li><b>The median daily spread is <span class="num" data-k="spread_median"></span>&nbsp;EUR/MWh.</b> That is the revenue pool a battery draws from.</li>
+    </ul>
+  </section>
+
+  <section id="forecast">
+    <div class="head">
+      <span class="eyebrow">The forecast</span>
+      <h2>Only what is known at 11:00 on D&minus;1</h2>
+      <p>Day <i>D</i> is auctioned at 11:00 Irish time the day before. A backtest that uses anything
+        published after that, such as actual wind or same-day prices, looks better than any desk could achieve.</p>
+    </div>
+    <div class="timeline" aria-label="Day-ahead market timeline">
+      <div class="tl">
+        <div class="zone known" style="left:0;width:54%"></div>
+        <div class="zone deliver" style="left:66%;width:34%"></div>
+        <div class="bar"></div>
+        <div class="mark" style="left:8%"></div>
+        <div class="mark" style="left:30%"></div>
+        <div class="mark gate" style="left:54%"></div>
+        <div class="mark" style="left:66%"></div>
+        <div class="lab top" style="left:8%"><b>D&minus;2 11:00</b><br>auction prices D&minus;1</div>
+        <div class="lab top" style="left:30%"><b>~D&minus;2 evening</b><br>48&nbsp;h weather run published</div>
+        <div class="lab top" style="left:54%;color:var(--accent)"><b style="color:var(--accent)">D&minus;1 11:00</b><br>gate closure</div>
+        <div class="lab top" style="left:83%"><b>23:00 D&minus;1 &rarr; 23:00 D</b><br>delivery (trading day D)</div>
+        <div class="lab bot" style="left:27%">everything in this band may be a feature</div>
+        <div class="lab bot" style="left:83%">never a feature: actual wind, actual load, prices of D</div>
+      </div>
+      <div class="allow">
+        <div><b>Allowed</b>Prices of D&minus;1 and earlier; the D&minus;1 GB price; wind and temperature forecasts issued &ge;48&nbsp;h ahead (six sites, ECMWF); the calendar and Irish holidays.</div>
+        <div class="no"><b>Upper bound only</b>Actual wind appears in one clearly labelled model, to measure how much a perfect wind forecast would add.</div>
+      </div>
+    </div>
+    <div class="figrow">
+      <div class="fig">
+        <h3>Error on the untouched test year</h3>
+        <span class="sub">Mean absolute error, EUR/MWh, Oct 2025&ndash;Sep 2026. Models refitted monthly; every choice made on Year&nbsp;1 data only.</span>
+        <svg id="c-mae" viewBox="0 0 520 250" role="img" aria-label="Bar chart of forecast error by model"></svg>
+        <p class="take">LightGBM beats the &ldquo;same hour yesterday&rdquo; baseline by <b class="num" data-k="imp_lgb"></b>. A perfect wind forecast would add only 2%; the 48&nbsp;h forecast already carries most of the wind signal.</p>
+      </div>
+      <div class="fig">
+        <h3>The edge grows with wind</h3>
+        <span class="sub">MAE by actual ROI wind-penetration band, EUR/MWh</span>
+        <div class="legend"><span><i style="background:var(--neutral)"></i>Naive (yesterday)</span><span><i style="background:var(--s1)"></i>LightGBM</span></div>
+        <svg id="c-band" viewBox="0 0 520 230" role="img" aria-label="Grouped bars of forecast error by wind band"></svg>
+        <p class="take">On windy days prices depart most from yesterday's, and that is where the weather forecast pays. The known weakness is a <b class="num" data-k="bias_lgb"></b>&nbsp;EUR/MWh bias in a rising-price year, left visible rather than tuned away on the test set.</p>
+      </div>
+    </div>
+  </section>
+
+  <section id="battery">
+    <div class="head">
+      <span class="eyebrow">The battery</span>
+      <h2>A forecast worth <span data-k="vof_k"></span> per MW a year</h2>
+      <p>Each trading day the schedule is optimised as a mixed-integer programme: power, SoC 5&ndash;95%,
+        88% round-trip efficiency, one cycle a day, no simultaneous charge and discharge. It is then settled at actual prices.
+        The baseline is a fixed seasonal schedule learned from Year&nbsp;1.</p>
+    </div>
+    <div class="figrow">
+      <div class="fig">
+        <h3>DAM arbitrage revenue, test year</h3>
+        <span class="sub">EUR per MW per year; share of perfect foresight in brackets</span>
+        <svg id="c-rev" viewBox="0 0 520 250" role="img" aria-label="Bar chart of battery revenue by strategy"></svg>
+        <p class="take">A naive forecast is <em>worse</em> than no forecast at all. Yesterday's peak is often in the wrong hour today.</p>
+      </div>
+      <div class="fig">
+        <h3>Month by month</h3>
+        <span class="sub">EUR thousand per MW</span>
+        <div class="legend"><span><i style="background:var(--neutral)"></i>Perfect foresight</span><span><i style="background:var(--s1)"></i>Forecast-based</span><span><i style="background:var(--s2)"></i>Fixed rule</span></div>
+        <svg id="c-month" viewBox="0 0 520 230" role="img" aria-label="Grouped bars of monthly battery revenue"></svg>
+        <p class="take">In Sep 2026 the daily shape broke from last year's. The rule earned EUR&nbsp;2.0k and the forecast EUR&nbsp;5.3k.</p>
+      </div>
+    </div>
+    <div class="figrow">
+      <div class="fig">
+        <h3>Sensitivity: duration &times; efficiency</h3>
+        <span class="sub">Forecast-based strategy, EUR thousand per MW per year</span>
+        <div class="tbl"><table id="t-sens"></table></div>
+        <p class="take">Revenue scales almost linearly with hours of storage, so the build decision comes down to capex per MWh. Efficiency is second-order. Half-hourly settlement adds only <span class="num" data-k="hh_uplift"></span>.</p>
+      </div>
+      <div class="fig">
+        <h3>What these numbers are not</h3>
+        <span class="sub">Read before quoting</span>
+        <ul class="points" style="font-size:0.9rem">
+          <li><b>DAM only.</b> No DS3 system services, capacity, intraday or balancing revenue, which make up much of an Irish battery's income.</li>
+          <li><b>No degradation cost, network charges or imbalance exposure.</b> The battery is assumed to be a price-taker.</li>
+          <li><b>Concentrated.</b> The best 10% of days earn <span class="num" data-k="top10"></span> of perfect-foresight revenue.</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section id="integrity">
+    <div class="head">
+      <span class="eyebrow">Data integrity</span>
+      <h2>The day the prices moved by a day</h2>
+    </div>
+    <div class="story">
+      <ol>
+        <li><b>An impossible chart.</b> The spread history showed a month, July 2023, with a median daily spread of zero. No real day-ahead market does that.</li>
+        <li><b>The public file had 54 &ldquo;flat&rdquo; days</b>, each with one price for all 24 hours.</li>
+        <li><b>Checking against the source.</b> 363 official SEMOpx result files matched the public series <em>only after shifting it by &minus;24&nbsp;h</em>, and then matched exactly in every hour.</li>
+        <li><b>Two more independent checks.</b> The corrected price lines up best with same-hour net load, and its cheap days fall on Saturday and Sunday, not Sunday and Monday.</li>
+        <li><b>Fixed and logged.</b> Timestamps were relabelled, flat days repaired from official files or excluded, and every hour tagged with its source.</li>
+      </ol>
+      <div style="display:grid;gap:14px">
+        <div class="fig">
+          <h3>Correlation with official SEMOpx prices</h3>
+          <span class="sub">By time shift applied to the public series</span>
+          <svg id="c-shift" viewBox="0 0 420 190" role="img" aria-label="Correlation by time shift"></svg>
+        </div>
+        <div class="ba">
+          <div class="before"><span class="k">Merit-order slope, before</span><div class="v">&minus;5</div></div>
+          <div><span class="k">After correction, EUR/MWh per 10&nbsp;pts</span><div class="v" data-k="slope10neg"></div></div>
+          <div class="before"><span class="k">Price variance explained by wind, before</span><div class="v">4%</div></div>
+          <div><span class="k">After correction</span><div class="v" data-k="r2"></div></div>
+        </div>
+      </div>
+    </div>
+    <div class="cols3">
+      <div><h3>Blocked sources, not bypassed</h3><p>EirGrid's file pages refused scripts (HTTP 403) and the dashboard rate-limited hard, so neither was worked around. Wind and load came from ENTSO-E via Energy-Charts instead, validated against EirGrid's own exports (correlation 0.998).</p></div>
+      <div><h3>A wrong guess, corrected in the log</h3><p>One dashboard feed was first judged UTC from a single DST edge case. Direct comparison with an independent series showed it was local time. The decision log records both the error and the fix.</p></div>
+      <div><h3>Deterministic by design</h3><p>Results drifted between runs until two causes were found: model threading, and unordered SQL rows feeding row-sampled training. Now two runs give identical numbers.</p></div>
+    </div>
+  </section>
+
+  <footer>
+    <span><b>Data:</b> Ember wholesale prices (CC-BY-4.0, from SEMOpx) &middot; SEMOpx market results &middot; Fraunhofer ISE Energy-Charts (ENTSO-E; EirGrid, SONI) &middot; Open-Meteo (CC-BY-4.0) &middot; EirGrid Smart Grid Dashboard (validation).</span>
+    <span><b>Stack:</b> Python, DuckDB + SQL, statsmodels, LightGBM, HiGHS MILP, matplotlib, openpyxl. Every number on this page is produced by the project code and stored in its metrics files.</span>
+  </footer>
+</div>
+<div id="tip" hidden></div>
+
+<script>
+const D = {"bands": [{"band": "<10%", "n": 3284, "p10": -13.7, "p25": 0.2, "med": 30.4, "p75": 72.3, "p90": 125.6}, {"band": "10-20%", "n": 3007, "p10": -24.1, "p25": -10.8, "med": 9.7, "p75": 43.3, "p90": 80.6}, {"band": "20-30%", "n": 2519, "p10": -31.6, "p25": -18.7, "med": -2.8, "p75": 24.3, "p90": 51.7}, {"band": "30-40%", "n": 2170, "p10": -44.8, "p25": -26.4, "med": -10.8, "p75": 9.9, "p90": 30.1}, {"band": "40-50%", "n": 2007, "p10": -63.2, "p25": -33.3, "med": -16.1, "p75": 1.4, "p90": 20.5}, {"band": "50-60%", "n": 1826, "p10": -84.5, "p25": -46.2, "med": -22.8, "p75": -7.5, "p90": 9.7}, {"band": "60%+", "n": 2622, "p10": -97.4, "p25": -63.1, "med": -33.8, "p75": -17.3, "p90": -2.4}], "netload": [[375.0, -62.0], [625.0, -49.7], [875.0, -46.1], [1125.0, -38.6], [1375.0, -32.0], [1625.0, -26.5], [1875.0, -22.3], [2125.0, -17.8], [2375.0, -13.1], [2625.0, -10.2], [2875.0, -5.0], [3125.0, 2.7], [3375.0, 10.7], [3625.0, 19.0], [3875.0, 36.3], [4125.0, 53.2], [4375.0, 76.6], [4625.0, 98.3], [4875.0, 142.8], [5125.0, 173.6]], "slope": -14.728, "r2_wind": 0.2662, "corr_gb_monthly": 0.9626, "profile": {"winter": {"weekday": [98.9, 96.5, 94.0, 91.9, 91.3, 95.0, 112.3, 142.3, 158.8, 162.7, 155.9, 148.5, 147.0, 146.4, 147.4, 155.7, 177.1, 199.4, 195.1, 171.1, 152.5, 135.8, 113.9, 110.2], "weekend": [107.6, 103.1, 99.0, 95.1, 90.8, 87.1, 92.9, 98.6, 106.5, 118.9, 123.4, 123.8, 125.5, 125.5, 123.3, 128.2, 145.1, 166.5, 163.0, 144.9, 130.3, 119.4, 102.5, 101.3]}, "summer": {"weekday": [124.9, 116.5, 115.8, 112.2, 112.1, 116.3, 130.7, 148.3, 155.2, 144.0, 124.9, 113.9, 107.5, 103.2, 100.8, 101.6, 113.1, 134.4, 157.8, 169.6, 171.7, 168.5, 156.5, 144.1], "weekend": [133.1, 122.1, 121.3, 116.6, 111.8, 106.6, 104.4, 104.6, 105.0, 102.8, 98.4, 90.2, 87.0, 82.1, 77.8, 77.7, 89.1, 112.2, 134.4, 147.6, 152.2, 155.4, 154.1, 137.4]}}, "spread_median": 104.0, "low_hours": 269, "neg_hours": 69, "hours": 17520, "p_low_ws60": 0.0591, "mae": {"naive_d1": 37.6, "naive_d7": 44.0, "linear": 29.1, "lightgbm": 25.4, "lightgbm_icon": 25.7, "lightgbm_perfect_wind": 24.8}, "bias": {"naive_d1": -0.1, "naive_d7": -1.4, "linear": -7.8, "lightgbm": -8.0, "lightgbm_icon": -8.4, "lightgbm_perfect_wind": -7.9}, "mae_band": {"naive_d1": {"<20%": 40.56, "20-40%": 35.76, "40-60%": 36.01, "60%+": 36.4}, "naive_d7": {"<20%": 50.11, "20-40%": 35.32, "40-60%": 44.05, "60%+": 45.35}, "linear": {"<20%": 32.16, "20-40%": 29.68, "40-60%": 26.88, "60%+": 23.63}, "lightgbm": {"<20%": 29.07, "20-40%": 24.91, "40-60%": 22.86, "60%+": 21.26}, "lightgbm_icon": {"<20%": 30.24, "20-40%": 24.56, "40-60%": 23.23, "60%+": 20.58}, "lightgbm_perfect_wind": {"<20%": 28.25, "20-40%": 24.75, "40-60%": 22.33, "60%+": 19.97}}, "imp": {"naive_d1": 0.0, "naive_d7": -16.8, "linear": 22.7, "lightgbm": 32.4, "lightgbm_icon": 31.6, "lightgbm_perfect_wind": 34.1}, "bt": {"forecast_lightgbm": {"rev": 45138, "cap": 79.8, "loss": 9}, "forecast_linear": {"rev": 42607, "cap": 75.3, "loss": 15}, "forecast_naive": {"rev": 33986, "cap": 60.1, "loss": 41}, "perfect": {"rev": 56568, "cap": 100.0, "loss": 0}, "rule": {"rev": 39653, "cap": 70.1, "loss": 12}}, "monthly": {"2025-10": {"perfect": 5274, "forecast_lightgbm": 4261, "rule": 3324}, "2025-11": {"perfect": 5977, "forecast_lightgbm": 5429, "rule": 5486}, "2025-12": {"perfect": 4197, "forecast_lightgbm": 3340, "rule": 3565}, "2026-01": {"perfect": 4288, "forecast_lightgbm": 3631, "rule": 3604}, "2026-02": {"perfect": 3015, "forecast_lightgbm": 2509, "rule": 2187}, "2026-03": {"perfect": 5351, "forecast_lightgbm": 4259, "rule": 3252}, "2026-04": {"perfect": 4933, "forecast_lightgbm": 3176, "rule": 3252}, "2026-05": {"perfect": 3207, "forecast_lightgbm": 2525, "rule": 2111}, "2026-06": {"perfect": 4565, "forecast_lightgbm": 3694, "rule": 3636}, "2026-07": {"perfect": 4211, "forecast_lightgbm": 3115, "rule": 3200}, "2026-08": {"perfect": 3961, "forecast_lightgbm": 3203, "rule": 3424}, "2026-09": {"perfect": 6657, "forecast_lightgbm": 5255, "rule": 1960}}, "sens": [{"h": 1, "rte": 0.8, "rev": 18680}, {"h": 1, "rte": 0.88, "rev": 23114}, {"h": 1, "rte": 0.92, "rev": 25186}, {"h": 2, "rte": 0.8, "rev": 36298}, {"h": 2, "rte": 0.88, "rev": 45138}, {"h": 2, "rte": 0.92, "rev": 49263}, {"h": 4, "rte": 0.8, "rev": 66419}, {"h": 4, "rte": 0.88, "rev": 83617}, {"h": 4, "rte": 0.92, "rev": 91578}], "vof": 5485, "vml": 11153, "hh_uplift": 0.5, "top10": 0.2178881065996399};
+const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const fmt = (v, d = 1) => v.toLocaleString("en-IE", { minimumFractionDigits: d, maximumFractionDigits: d });
+const k = v => "EUR " + fmt(v / 1000, 1) + "k";
+const NS = "http://www.w3.org/2000/svg";
+const tip = document.getElementById("tip");
+
+function el(tag, attrs = {}, parent) {
+  const e = document.createElementNS(NS, tag);
+  for (const [a, v] of Object.entries(attrs)) e.setAttribute(a, v);
+  if (parent) parent.appendChild(e);
+  return e;
+}
+function hover(node, html) {
+  node.classList.add("hit");
+  const show = ev => { tip.innerHTML = html; tip.hidden = false; move(ev); };
+  const move = ev => {
+    const x = (ev.touches ? ev.touches[0].clientX : ev.clientX), y = (ev.touches ? ev.touches[0].clientY : ev.clientY);
+    const w = tip.offsetWidth;
+    tip.style.left = Math.min(window.innerWidth - w - 8, x + 12) + "px";
+    tip.style.top = (y + 14) + "px";
+  };
+  node.addEventListener("mouseenter", show); node.addEventListener("mousemove", move);
+  node.addEventListener("mouseleave", () => tip.hidden = true);
+  node.addEventListener("touchstart", show, { passive: true });
+}
+function text(svg, x, y, s, o = {}) {
+  const t = el("text", { x, y, fill: o.fill || css("--ink-2"), "font-size": o.size || 11,
+    "font-family": o.mono ? css("--f-mono") : css("--f-body"), "text-anchor": o.anchor || "start",
+    "dominant-baseline": o.base || "auto", "font-weight": o.weight || 400 }, svg);
+  t.textContent = s; return t;
+}
+function scale(d0, d1, r0, r1) { return v => r0 + (v - d0) / (d1 - d0) * (r1 - r0); }
+function yAxis(svg, y, ticks, x0, x1, unit) {
+  ticks.forEach(t => {
+    el("line", { x1: x0, x2: x1, y1: y(t), y2: y(t), stroke: t === 0 ? css("--axis") : css("--grid"), "stroke-width": t === 0 ? 1.2 : 1 }, svg);
+    text(svg, x0 - 6, y(t), (t > 0 && unit === "dev" ? "+" : "") + t, { anchor: "end", base: "middle", mono: 1, size: 10, fill: css("--muted") });
+  });
+}
+
+function merit(svg) {
+  svg.innerHTML = "";
+  const L = 46, R = 510, T = 12, B = 250, b = D.bands;
+  const y = scale(-100, 130, B, T), bw = (R - L) / b.length;
+  yAxis(svg, y, [-100, -50, 0, 50, 100], L, R, "dev");
+  b.forEach((d, i) => {
+    const cx = L + bw * (i + 0.5);
+    const g = el("g", {}, svg);
+    el("line", { x1: cx, x2: cx, y1: y(d.p10), y2: y(d.p90), stroke: css("--s1"), "stroke-width": 2, opacity: 0.55 }, g);
+    el("rect", { x: cx - bw * 0.28, y: y(d.p75), width: bw * 0.56, height: y(d.p25) - y(d.p75), fill: css("--s1-soft"), rx: 2 }, g);
+    el("line", { x1: cx - bw * 0.3, x2: cx + bw * 0.3, y1: y(d.med), y2: y(d.med), stroke: css("--s1"), "stroke-width": 3 }, g);
+    el("rect", { x: cx - bw / 2, y: T, width: bw, height: B - T, fill: "transparent" }, g);
+    hover(g, `<b>${d.band}</b> wind penetration<br>median ${d.med > 0 ? "+" : ""}${fmt(d.med)} EUR/MWh<br>IQR ${fmt(d.p25)} to ${fmt(d.p75)}<br>${d.n.toLocaleString()} hours`);
+    text(svg, cx, B + 16, d.band, { anchor: "middle", size: 10.5 });
+    text(svg, cx + bw * 0.34, y(d.med), (d.med > 0 ? "+" : "") + Math.round(d.med), { base: "middle", mono: 1, size: 10, fill: css("--ink") });
+  });
+  text(svg, (L + R) / 2, B + 36, "ROI wind / ROI load", { anchor: "middle", size: 10.5, fill: css("--muted") });
+}
+
+function line(svg, series, opt) {
+  svg.innerHTML = "";
+  const L = 46, R = 510, T = 12, B = opt.h - 40;
+  const x = scale(opt.x0, opt.x1, L, R), y = scale(opt.y0, opt.y1, B, T);
+  yAxis(svg, y, opt.yt, L, R, opt.unit);
+  opt.xt.forEach(t => text(svg, x(t), B + 16, opt.xl ? opt.xl(t) : t, { anchor: "middle", size: 10, mono: 1, fill: css("--muted") }));
+  if (opt.xlabel) text(svg, (L + R) / 2, B + 34, opt.xlabel, { anchor: "middle", size: 10.5, fill: css("--muted") });
+  series.forEach(s => {
+    const d = s.pts.map((p, i) => (i ? "L" : "M") + x(p[0]).toFixed(1) + " " + y(p[1]).toFixed(1)).join(" ");
+    el("path", { d, fill: "none", stroke: s.color, "stroke-width": 2, "stroke-linejoin": "round" }, svg);
+    s.pts.forEach(p => {
+      const c = el("circle", { cx: x(p[0]), cy: y(p[1]), r: 7, fill: "transparent" }, svg);
+      el("circle", { cx: x(p[0]), cy: y(p[1]), r: opt.dots ? 3 : 0, fill: s.color, "pointer-events": "none" }, svg);
+      hover(c, opt.tip(s, p));
+    });
+  });
+}
+
+function hbars(svg, rows, opt) {
+  svg.innerHTML = "";
+  const L = opt.left || 190, R = 470, T = 6, rh = opt.rh || 34;
+  const x = scale(0, opt.max, L, R);
+  rows.forEach((r, i) => {
+    const yy = T + i * rh;
+    text(svg, L - 10, yy + rh * 0.42, r.label, { anchor: "end", base: "middle", size: 11.5, fill: css("--ink") });
+    const g = el("g", {}, svg);
+    el("rect", { x: L, y: yy + 4, width: Math.max(1, x(r.v) - L), height: rh - 14, fill: r.color, rx: 2 }, g);
+    hover(g, r.tip);
+    text(svg, x(r.v) + 6, yy + rh * 0.42, r.text, { base: "middle", size: 10.5, mono: 1, fill: css("--ink") });
+  });
+}
+
+function gbars(svg, cats, groups, opt) {
+  svg.innerHTML = "";
+  const L = 40, R = 510, T = 10, B = opt.h - 34;
+  const y = scale(0, opt.max, B, T), cw = (R - L) / cats.length, gw = cw * 0.78 / groups.length;
+  yAxis(svg, y, opt.yt, L, R);
+  cats.forEach((c, i) => {
+    groups.forEach((g, j) => {
+      const v = g.vals[i], x0 = L + cw * i + cw * 0.11 + gw * j;
+      const r = el("rect", { x: x0, y: y(v), width: gw - 1.5, height: B - y(v), fill: g.color, rx: 1.5 }, svg);
+      hover(r, `<b>${opt.catLabel ? opt.catLabel(c) : c}</b><br>${g.name}: ${opt.fmt(v)}`);
+    });
+    if (!opt.every || i % opt.every === 0) text(svg, L + cw * (i + 0.5), B + 15, opt.catLabel ? opt.catLabel(c) : c, { anchor: "middle", size: 10, fill: css("--muted") });
+  });
+}
+
+function render() {
+  const s1 = css("--s1"), s2 = css("--s2"), s3 = css("--s3"), nu = css("--neutral");
+  const bt = D.bt;
+  // KPIs
+  document.getElementById("kpis").innerHTML = [
+    [`&minus;${Math.round(-D.slope)}<small>EUR/MWh</small>`, "price change per +10 points of wind penetration, within month"],
+    [`${fmt(D.mae.lightgbm)}<small>MAE</small>`, `day-ahead forecast error, ${Math.round(D.imp.lightgbm)}% below the naive baseline`],
+    [`${fmt(bt.forecast_lightgbm.rev / 1000)}k<small>EUR/MW/yr</small>`, `battery DAM revenue, ${Math.round(bt.forecast_lightgbm.cap)}% of perfect foresight`],
+    [`&minus;24<small>hours</small>`, "timestamp error found in the public price data and corrected"],
+  ].map(([v, l]) => `<div class="kpi"><span class="v">${v}</span><span class="l">${l}</span></div>`).join("");
+  const set = (key, v) => document.querySelectorAll(`[data-k="${key}"]`).forEach(n => n.innerHTML = v);
+  set("corr_gb_monthly", fmt(D.corr_gb_monthly, 2)); set("slope10", Math.round(-D.slope));
+  set("slope10neg", "&minus;" + Math.round(-D.slope)); set("r2", Math.round(D.r2_wind * 100) + "%");
+  set("band_lo", "+" + Math.round(D.bands[0].med)); set("band_hi", Math.round(D.bands[6].med));
+  set("low_hours", D.low_hours); set("low_share", fmt(100 * D.low_hours / D.hours, 1) + "%");
+  set("p_low_ws60", fmt(100 * D.p_low_ws60, 1) + "%"); set("spread_median", Math.round(D.spread_median));
+  set("imp_lgb", Math.round(D.imp.lightgbm) + "%"); set("bias_lgb", fmt(D.bias.lightgbm));
+  set("vof_k", "EUR&nbsp;" + fmt(D.vof / 1000) + "k"); set("hh_uplift", "+" + fmt(D.hh_uplift) + "%");
+  set("top10", Math.round(D.top10 * 100) + "%");
+
+  merit(document.getElementById("c-merit"));
+  line(document.getElementById("c-netload"), [{ color: s1, pts: D.netload }], {
+    h: 300, x0: 250, x1: 5250, y0: -80, y1: 190, yt: [-50, 0, 50, 100, 150], unit: "dev", dots: 1,
+    xt: [1000, 2000, 3000, 4000, 5000], xl: t => (t / 1000) + "k MW", xlabel: "ROI net load",
+    tip: (s, p) => `net load ~${p[0].toLocaleString()} MW<br>median ${p[1] > 0 ? "+" : ""}${fmt(p[1])} EUR/MWh vs month`,
+  });
+  ["winter", "summer"].forEach(se => line(document.getElementById("c-" + se), [
+    { name: "Weekday", color: s1, pts: D.profile[se].weekday.map((v, i) => [i, v]) },
+    { name: "Weekend", color: s2, pts: D.profile[se].weekend.map((v, i) => [i, v]) },
+  ], { h: 240, x0: 0, x1: 23, y0: 70, y1: 210, yt: [80, 120, 160, 200], xt: [0, 6, 12, 18, 23], xl: t => String(t).padStart(2, "0") + ":00",
+       tip: (s, p) => `${s.name}, ${String(p[0]).padStart(2, "0")}:00<br>${fmt(p[1])} EUR/MWh` }));
+
+  const lab = { naive_d7: "Naive: last week", naive_d1: "Naive: yesterday", linear: "Linear regression",
+                lightgbm: "LightGBM", lightgbm_perfect_wind: "+ actual wind (bound)" };
+  hbars(document.getElementById("c-mae"), Object.keys(lab).map(m => ({
+    label: lab[m], v: D.mae[m], text: fmt(D.mae[m]),
+    color: m.startsWith("naive") ? nu : (m === "lightgbm_perfect_wind" ? css("--s1-soft") : s1),
+    tip: `<b>${lab[m]}</b><br>MAE ${fmt(D.mae[m])} EUR/MWh<br>bias ${fmt(D.bias[m])}<br>${D.imp[m] >= 0 ? "-" : "+"}${fmt(Math.abs(D.imp[m]))}% vs naive`,
+  })), { max: 50, left: 170, rh: 46 });
+  const bands = Object.keys(D.mae_band.lightgbm);
+  gbars(document.getElementById("c-band"), bands, [
+    { name: "Naive (yesterday)", color: nu, vals: bands.map(b => D.mae_band.naive_d1[b]) },
+    { name: "LightGBM", color: s1, vals: bands.map(b => D.mae_band.lightgbm[b]) },
+  ], { h: 230, max: 45, yt: [0, 10, 20, 30, 40], fmt: v => fmt(v) + " EUR/MWh", catLabel: c => c + " wind" });
+
+  const sl = { perfect: "Perfect foresight", forecast_lightgbm: "Forecast: LightGBM", forecast_linear: "Forecast: linear",
+               rule: "Fixed rule", forecast_naive: "Forecast: naive" };
+  const sc = { perfect: nu, forecast_lightgbm: s1, forecast_linear: s1, rule: s2, forecast_naive: s3 };
+  hbars(document.getElementById("c-rev"), Object.keys(sl).map(s => ({
+    label: sl[s], v: bt[s].rev / 1000, color: sc[s], text: `${fmt(bt[s].rev / 1000)}k (${Math.round(bt[s].cap)}%)`,
+    tip: `<b>${sl[s]}</b><br>EUR ${bt[s].rev.toLocaleString()} per MW per year<br>${fmt(bt[s].cap)}% of perfect foresight<br>${bt[s].loss} loss-making days`,
+  })), { max: 72, left: 150, rh: 46 });
+  const months = Object.keys(D.monthly);
+  const mlab = m => new Date(m + "-01").toLocaleString("en-IE", { month: "short" }) + " " + m.slice(2, 4);
+  gbars(document.getElementById("c-month"), months, [
+    { name: "Perfect foresight", color: nu, vals: months.map(m => D.monthly[m].perfect / 1000) },
+    { name: "Forecast-based", color: s1, vals: months.map(m => D.monthly[m].forecast_lightgbm / 1000) },
+    { name: "Fixed rule", color: s2, vals: months.map(m => D.monthly[m].rule / 1000) },
+  ], { h: 230, max: 7, yt: [0, 2, 4, 6], fmt: v => "EUR " + fmt(v) + "k", catLabel: mlab, every: 2 });
+
+  const t = document.getElementById("t-sens"), vals = D.sens.map(s => s.rev), mx = Math.max(...vals), mn = Math.min(...vals);
+  t.innerHTML = "<tr><th>Duration</th><th>80% RTE</th><th>88% RTE</th><th>92% RTE</th></tr>" + [1, 2, 4].map(h =>
+    `<tr><td>${h} h (${h} MWh)</td>` + [0.8, 0.88, 0.92].map(r => {
+      const v = D.sens.find(s => s.h === h && s.rte === r).rev, a = 0.12 + 0.6 * (v - mn) / (mx - mn);
+      return `<td class="heat" style="background:color-mix(in srgb, var(--s1) ${Math.round(a * 100)}%, transparent);${a > 0.45 ? "color:#fff" : ""}">${fmt(v / 1000)}k</td>`;
+    }).join("") + "</tr>").join("");
+
+  const svg = document.getElementById("c-shift"); svg.innerHTML = "";
+  const sh = [["-48 h", 0.529], ["-24 h", 0.990], ["0 h (as published)", 0.528], ["+24 h", 0.418]];
+  const L = 130, R = 380, x = scale(0, 1, L, R);
+  sh.forEach(([lb, v], i) => {
+    const yy = 8 + i * 44;
+    text(svg, L - 10, yy + 15, lb, { anchor: "end", base: "middle", size: 11, fill: css("--ink") });
+    const r = el("rect", { x: L, y: yy + 4, width: x(v) - L, height: 22, rx: 2, fill: i === 1 ? css("--accent") : nu }, svg);
+    hover(r, `shift ${lb}: correlation ${fmt(v, 3)}`);
+    text(svg, x(v) + 6, yy + 15, fmt(v, 2), { base: "middle", mono: 1, size: 10.5, fill: css("--ink") });
+  });
+}
+render();
+window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", render);
+new MutationObserver(render).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+</script>
