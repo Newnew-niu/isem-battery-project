@@ -104,7 +104,7 @@ def main():
 
     monthly = res.assign(month=res.trading_date.dt.to_period("M").astype(str)).pivot_table(
         index="month", columns="strategy", values="revenue", aggfunc="sum")
-    M["monthly_revenue_eur"] = monthly.round(0).to_dict("index")
+    M["monthly_revenue_eur"] = monthly.round(2).to_dict("index")
     t = d[(d.trading_date >= TEST_START) & (d.trading_date <= TEST_END)].dropna(subset=["price"])
     dd = t.groupby("trading_date").price.agg(lambda x: x.max() - x.min()).rename("spread").to_frame()
     dd["level"] = t.groupby("trading_date").price.mean()

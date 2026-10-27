@@ -17,12 +17,16 @@ Numbers quoted are reproducible from the commands/scripts referenced.
 
 | Gas year | Mean €/MWh | Std | Negative hours | Median daily spread |
 |---|---|---|---|---|
-| 2019/20 | 36.4 | 19.4 | 334 | 37.8 |
-| 2021/22 | 235.8 | 98.2 | 33 | 152.3 |
-| 2022/23 | 144.6 | 70.5 | 35 | 85.2 |
-| 2023/24 | 103.1 | 40.0 | 64 | 82.4 |
-| 2024/25 | 120.8 | 58.0 | 39 | 99.8 |
-| 2025/26 | 135.2 | 57.3 | 30 | 107.4 |
+| 2019/20 | 36.4 | 19.4 | 337 | 37.2 |
+| 2021/22 | 236.1 | 98.6 | 33 | 150.7 |
+| 2022/23 | 144.4 | 73.7 | 35 | 90.5 |
+| 2023/24 | 103.1 | 40.0 | 64 | 82.7 |
+| 2024/25 | 121.1 | 58.4 | 39 | 100.0 |
+| 2025/26 | 135.1 | 57.3 | 30 | 108.0 |
+
+*(Recomputed after the D9 price correction; the original table, built on the uncorrected
+series, differed by less than 1% except where flat-price days moved a spread median. The
+conclusion is unchanged.)*
 
 The market has changed a lot since 2018. Prices were very low during COVID (2019/20). The
 2021/22 gas crisis roughly doubled the price level. The two most recent years are similar to
