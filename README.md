@@ -158,7 +158,5 @@ src/                 pipeline, analysis, models, backtest, report builders (run_
 src/sql/             DuckDB schema, analysis view and the Phase 2 queries
 reports/             deliverables, generated reports, figures/, metrics JSON
 docs/DECISIONS.md    decision log (evidence, costs, checks)
-notebooks/           scratch space for exploration (all reported results come from src/)
-LEARNING_NOTES.md    study notes and interview preparation (Chinese)
 data/                raw downloads and the DuckDB database (git-ignored, rebuilt by the pipeline)
 ```
