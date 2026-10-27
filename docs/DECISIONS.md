@@ -151,7 +151,22 @@ HTTP 503 errors. Its figures are operational SCADA readings and may differ sligh
 quality-controlled settlement data.
 
 **Mitigation.** The downloader is polite: it waits between requests, backs off and retries
-on 503, and caches every response in `data/raw/`. Gaps are logged, not filled.
+on 503, and caches every response in `data/raw/`. Gaps are logged, not filled. With these
+settings the download takes several hours, about one 7-day chunk every 1–2 minutes. We chose
+to accept that rather than send requests faster.
+
+**Time convention of SGD timestamps: UTC (fixed GMT).** Evidence:
+1. On the spring DST day (2025-03-30), Irish local 01:00–01:45 does not exist, yet SGD
+   reports those four quarter-hours.
+2. On the autumn DST day (2025-10-26), local 01:00–01:45 happens twice, yet SGD reports it
+   once.
+
+A third, independent check runs in `build_db.py`. Demand follows local clocks, so in UTC the
+evening demand peak should come one hour earlier in summer than in winter. The result is
+written to `reports/data_quality_log.md`.
+
+*Risk if wrong.* Wind and demand would be one hour out of line with prices for half the year.
+That would weaken the merit-order relationship in summer.
 
 ---
 
