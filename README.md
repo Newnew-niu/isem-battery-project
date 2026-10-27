@@ -39,6 +39,12 @@ python -m venv .venv
 pip install -r requirements.txt
 ```
 
+## Key decisions
+
+Every choice that could change a result (study period, forecast vintage, weather model,
+locations, time handling) is logged with evidence, costs and checks in
+[`docs/DECISIONS.md`](docs/DECISIONS.md).
+
 ## Methodology, results, limitations
 
 To be written in later phases.
