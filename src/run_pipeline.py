@@ -7,12 +7,14 @@ import build_db
 import download_ember
 import download_energycharts
 import download_openmeteo
+import download_semopx
 
 
 def main():
     download_ember.main()
     download_energycharts.main()
     download_openmeteo.main()
+    download_semopx.main()
     build_db.main()
 
 

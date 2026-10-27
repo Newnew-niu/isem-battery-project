@@ -6,7 +6,21 @@ CREATE OR REPLACE TABLE price_dam (
     ts_utc        TIMESTAMP PRIMARY KEY,  -- start of the delivery hour
     ts_local      TIMESTAMP NOT NULL,     -- Europe/Dublin wall-clock time
     trading_date  DATE      NOT NULL,
-    price_eur_mwh DOUBLE    NOT NULL      -- SEMOpx DAM clearing price (via Ember); can be negative
+    price_eur_mwh DOUBLE,                 -- DAM clearing price; can be negative; NULL on unrecoverable Ember flat days
+    price_source  VARCHAR   NOT NULL      -- 'ember', 'semopx' (official file, replaces an Ember flat day) or missing
+);
+
+-- Official SEMOpx half-hourly DAM prices (rolling ~12 months available): validation and
+-- the 30-minute battery sensitivity in Phase 4.
+CREATE OR REPLACE TABLE price_dam_hh (
+    ts_utc        TIMESTAMP PRIMARY KEY,  -- start of the half-hour
+    price_eur_mwh DOUBLE
+);
+
+-- GB day-ahead price (Ember), context only: never used as a model feature.
+CREATE OR REPLACE TABLE price_gb (
+    ts_utc        TIMESTAMP PRIMARY KEY,
+    price_eur_mwh DOUBLE
 );
 
 -- Actual wind and load from Energy-Charts (ENTSO-E). ROI = EirGrid area, NI = SONI area.

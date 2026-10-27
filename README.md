@@ -63,6 +63,32 @@ Every choice that could change a result (study period, forecast vintage, weather
 locations, time handling) is logged with evidence, costs and checks in
 [`docs/DECISIONS.md`](docs/DECISIONS.md).
 
+## Battery optimisation (Phase 4)
+
+For each DAM trading day with hourly periods $t = 1..T$ ($T$ = 23, 24 or 25), price $p_t$
+(EUR/MWh), period length $\Delta t$ = 1 h, charge $c_t$ and discharge $d_t$ (MW), state of charge
+$s_t$ (MWh) and a binary mode $u_t$:
+
+$$
+\max_{c,d,s,u} \; \sum_{t=1}^{T} p_t \,(d_t - c_t)\,\Delta t
+$$
+
+subject to
+
+$$
+\begin{aligned}
+s_t &= s_{t-1} + \eta_c\, c_t\, \Delta t - \frac{d_t\, \Delta t}{\eta_d}, \qquad s_0 = s_T = \underline{S} && \text{(SoC continuity, energy-neutral day)}\\
+\underline{S} &\le s_t \le \overline{S}, \qquad \underline{S} = 0.05E,\; \overline{S} = 0.95E && \text{(SoC limits)}\\
+0 \le c_t &\le P\,u_t, \qquad 0 \le d_t \le P\,(1-u_t), \qquad u_t \in \{0,1\} && \text{(power, no simultaneous charge/discharge)}\\
+\sum_{t} \frac{d_t\,\Delta t}{\eta_d} &\le \overline{S} - \underline{S} && \text{(at most one full cycle per day)}
+\end{aligned}
+$$
+
+with $P$ = 1 MW, $E$ = 2 MWh and $\eta_c = \eta_d = \sqrt{0.88}$. The binary is needed only
+because negative prices otherwise make "charging and discharging at once" (burning energy in
+losses) look profitable. Solved per day with HiGHS (`scipy.optimize.milp`), ~3 ms per day.
+Implementation: [`src/battery.py`](src/battery.py).
+
 ## Methodology, results, limitations
 
 To be written in later phases.

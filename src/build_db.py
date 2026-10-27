@@ -60,13 +60,22 @@ def load_prices():
     df = add_time_columns(df)
 
     log("## 1. Day-ahead prices (Ember / SEMOpx)")
-    log(f"- Rows in file: {len(df):,}; span {df.ts_utc.min()} to {df.ts_utc.max()} UTC")
+    log(f"- Rows in file: {len(df):,}; span {df.ts_utc.min()} to {df.ts_utc.max()} UTC (as labelled by Ember)")
     dup = df.ts_utc.duplicated().sum()
     log(f"- Duplicate timestamps: {dup}")
     # Ember's own local column must agree with our tz conversion
     ember_local = pd.to_datetime(raw["Datetime (Local)"])
     log(f"- Rows where Ember local time disagrees with UTC->{LOCAL_TZ}: "
         f"{(ember_local != df.ts_local).sum()}")
+
+    # D9: Ember's Ireland series is labelled 24 h late. Evidence (logged below and in DECISIONS.md):
+    # exact match with official SEMOpx files only after a -24 h shift; physical alignment with
+    # load/wind; first row then falls on I-SEM go-live (trading day 2018-10-01).
+    check_ember_shift(df)
+    df["ts_utc"] = df.ts_utc - pd.Timedelta(hours=24)
+    df = add_time_columns(df[["ts_utc", "price_eur_mwh"]].copy())
+    log(f"- Applied -24 h correction; series now spans trading days {df.trading_date.min()} "
+        f"to {df.trading_date.max()} (I-SEM went live on trading day 2018-10-01)")
 
     idx = window_index("h")
     w = df[df.ts_utc.isin(idx)]
@@ -83,9 +92,12 @@ def load_prices():
     log(f"  All of these are last-Sunday-of-March/October DST days: {set(odd.index) == expected_odd}. "
         "EU clocks change simultaneously at 01:00 UTC, so DST trading days have 23/25 periods.")
 
+    df = fix_flat_days(df)
+    w = df[df.ts_utc.isin(idx)]
     s = w[study_mask(w.ts_utc)]
-    p = s.price_eur_mwh
-    log(f"- Study period: {len(s):,} hours")
+    p = s.price_eur_mwh.dropna()
+    log(f"- Study period: {len(s):,} hours; price source: "
+        + ", ".join(f"{k} {v:,}" for k, v in s.price_source.value_counts().items()))
     log(f"- Price range {p.min():.2f} to {p.max():.2f} EUR/MWh; mean {p.mean():.2f}")
     log(f"- Negative-price hours: {(p < 0).sum()} ({(p < 0).mean():.2%}); "
         f"zero-price hours: {(p == 0).sum()}; hours <= 5 EUR: {(p <= 5).sum()}")
@@ -97,6 +109,93 @@ def load_prices():
     log("- Five highest prices (local time): "
         + "; ".join(f"{r.ts_local:%Y-%m-%d %H:%M} {r.price_eur_mwh:.0f}" for r in top.itertuples()))
     log()
+    return df
+
+
+def load_semopx():
+    """Official SEMOpx DAM results: half-hourly ROI-DA index price (EUR). The SEM has one
+    price for ROI and NI, so the ROI block is used."""
+    rows = []
+    for f in sorted((RAW / "semopx").glob("MarketResult_SEM-DA_*.csv")):
+        lines = f.read_text(encoding="utf-8-sig").splitlines()
+        i = lines.index("Market;ROI-DA")
+        while lines[i] != "Index prices;30;EUR":
+            i += 1
+        ts = pd.to_datetime(lines[i + 1].split(";"), utc=True).tz_localize(None)
+        vals = [float(v.replace(",", ".")) for v in lines[i + 2].split(";")]
+        rows.append(pd.DataFrame({"ts_utc": ts, "price_eur_mwh": vals}))
+    if not rows:
+        return pd.DataFrame(columns=["ts_utc", "price_eur_mwh"])
+    hh = pd.concat(rows).drop_duplicates("ts_utc").sort_values("ts_utc").reset_index(drop=True)
+    return hh
+
+
+def semopx_hourly_first():
+    """Hourly price as Ember defines it in the half-hourly era: the first half-hour of each hour."""
+    hh = load_semopx()
+    if not len(hh):
+        return pd.Series(dtype=float)
+    r = hh.set_index("ts_utc").price_eur_mwh.resample("h")
+    first, count = r.first(), r.count()
+    return first[count == 2]
+
+
+def check_ember_shift(df):
+    """Compare Ember (as labelled) with official SEMOpx prices at several time shifts."""
+    ref = semopx_hourly_first()
+    if not len(ref):
+        log("- SEMOpx files not present - Ember time-alignment check NOT RUN")
+        return
+    e = df.set_index("ts_utc").price_eur_mwh
+    res = []
+    for h in (-48, -24, 0, 24):
+        s = e.copy()
+        s.index = s.index + pd.Timedelta(hours=h)
+        m = pd.concat([s.rename("ember"), ref.rename("semopx")], axis=1, join="inner").dropna()
+        res.append((h, len(m), m.ember.corr(m.semopx), ((m.ember - m.semopx).abs() <= 0.01).mean()))
+    log("- Ember vs official SEMOpx (first half-hour of each hour), by shift applied to Ember: "
+        + "; ".join(f"{h:+d} h: corr {c:.3f}, exact match {x:.1%} (n={n:,})" for h, n, c, x in res))
+
+
+def fix_flat_days(df):
+    """Ember has trading days where all hours carry one identical price - not a real DAM
+    outcome (verified against SEMOpx). Replace them with the official SEMOpx price (same
+    definition as Ember: first half-hour of each hour) where available, otherwise NULL.
+    See docs/DECISIONS.md, D9."""
+    hh = load_semopx()
+    ref = semopx_hourly_first()
+    df["price_source"] = "ember"
+    nd = df.groupby("trading_date").price_eur_mwh.transform("nunique")
+    flat = nd == 1
+    flat_days = sorted(df.loc[flat, "trading_date"].unique())
+    log(f"- Ember trading days with a single price for all hours (flat days): {len(flat_days)} "
+        f"({flat_days[0]} to {flat_days[-1]})")
+
+    if len(ref):
+        log(f"- SEMOpx official DAM files: {hh.ts_utc.dt.normalize().nunique():,} days of half-hourly prices "
+            f"({hh.ts_utc.min():%Y-%m-%d} to {hh.ts_utc.max():%Y-%m-%d} UTC). The DAM clears in 30-minute "
+            "periods; Ember's hourly value equals the first half-hour of each hour")
+        m = df[~flat].set_index("ts_utc").price_eur_mwh.to_frame("ember").join(ref.rename("semopx"), how="inner")
+        diff = (m.ember - m.semopx).abs()
+        log(f"- Validation after the -24 h correction on {len(m):,} non-flat overlapping hours: exact match "
+            f"(<= 0.01 EUR) in {(diff <= 0.01).mean():.2%} of hours; max abs diff {diff.max():.2f} EUR/MWh")
+        fl = df[flat].set_index("ts_utc").price_eur_mwh.to_frame("ember").join(ref.rename("semopx"), how="inner")
+        if len(fl):
+            log(f"- On flat days covered by SEMOpx ({fl.index.normalize().nunique()} days), official prices "
+                f"range {fl.semopx.min():.0f} to {fl.semopx.max():.0f} EUR/MWh while Ember shows one value "
+                "per day -> Ember flat days are a data artefact, not a market outcome")
+        repl = flat & df.ts_utc.isin(ref.index)
+        df.loc[repl, "price_eur_mwh"] = df.loc[repl, "ts_utc"].map(ref).values
+        df.loc[repl, "price_source"] = "semopx"
+    else:
+        repl = flat & False
+    rest = flat & ~repl
+    df.loc[rest, "price_eur_mwh"] = np.nan
+    df.loc[rest, "price_source"] = "missing (Ember flat day)"
+    in_study = study_mask(df.ts_utc)
+    log(f"- Study period: {df[in_study & repl].trading_date.nunique()} flat days replaced with SEMOpx, "
+        f"{df[in_study & rest].trading_date.nunique()} set to NULL "
+        f"({', '.join(str(d) for d in sorted(df[in_study & rest].trading_date.unique()))})")
     return df
 
 
@@ -251,6 +350,25 @@ def check_load_timezone(hourly):
     log()
 
 
+def check_price_physics(prices, hourly):
+    """Independent check of price timing: the DAM price should co-move most strongly with
+    same-hour net load (load minus wind), not with the previous or next day's."""
+    log("## 5. Price timing check against physical system data")
+    p = prices.set_index("ts_utc").price_eur_mwh
+    h = hourly.set_index("ts_utc")
+    nl = (h.load_roi_mw - h.wind_roi_mw).rename("net_load")
+    out = []
+    for k in (-24, 0, 24):
+        s = p.copy()
+        s.index = s.index + pd.Timedelta(hours=k)
+        m = pd.concat([s, nl], axis=1, join="inner").dropna()
+        m = m[study_mask(m.index.to_series()).values]
+        out.append(f"{k:+d} h: {m.iloc[:, 0].corr(m.net_load):.3f}")
+    log("- Correlation of corrected price with ROI net load when the price is shifted by "
+        + "; ".join(out) + " -> peak at 0 h confirms the -24 h correction")
+    log()
+
+
 # ---------------------------------------------------------------- weather
 def load_weather():
     frames = []
@@ -268,7 +386,7 @@ def load_weather():
     idx = window_index("h")
     df = df[df.ts_utc.isin(idx)]
 
-    log("## 5. Weather forecasts (Open-Meteo Previous Runs, 48 h-ahead vintage)")
+    log("## 6. Weather forecasts (Open-Meteo Previous Runs, 48 h-ahead vintage)")
     log(f"- Models: {', '.join(sorted(df.model.unique()))}; "
         f"locations: {', '.join(sorted(df.location.unique()))}")
     g = df.groupby(["model", "location"])
@@ -287,7 +405,7 @@ def load_weather():
 
 def check_forecast_vs_actual(weather, hourly):
     """Sanity check that the 48 h-ahead forecast carries real information about wind output."""
-    log("## 6. Forecast sanity check (descriptive only, not used for model selection)")
+    log("## 7. Forecast sanity check (descriptive only, not used for model selection)")
     w = (weather[weather.model == "ecmwf_ifs025"].groupby("ts_utc").wind_speed_100m.mean()
          .rename("fc").reset_index())
     m = w.merge(hourly[["ts_utc", "wind_all_mw"]], on="ts_utc").dropna()
@@ -304,8 +422,14 @@ def load_db(prices, hh, hourly, weather):
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     con = duckdb.connect(str(DB_PATH))
     con.execute((SQL_DIR / "schema.sql").read_text())
-    con.execute("INSERT INTO price_dam SELECT ts_utc, ts_local, trading_date, price_eur_mwh "
-                "FROM prices")
+    con.execute("INSERT INTO price_dam SELECT ts_utc, ts_local, trading_date, price_eur_mwh, "
+                "price_source FROM prices")
+    gb = pd.read_csv(RAW / "ember" / "United Kingdom.csv")
+    gb = pd.DataFrame({"ts_utc": pd.to_datetime(gb["Datetime (UTC)"]),
+                       "price_eur_mwh": gb["Price (EUR/MWhe)"].astype(float)})
+    con.execute("INSERT INTO price_gb SELECT * FROM gb")
+    semopx_hh = load_semopx()
+    con.execute("INSERT INTO price_dam_hh SELECT ts_utc, price_eur_mwh FROM semopx_hh")
     con.execute("INSERT INTO system_hh SELECT ts_utc, wind_roi_mw, wind_ni_mw, wind_all_mw, "
                 "load_roi_mw, load_ni_mw FROM hh")
     con.execute("INSERT INTO system_hourly SELECT ts_utc, wind_roi_mw, wind_ni_mw, wind_all_mw, "
@@ -316,12 +440,12 @@ def load_db(prices, hh, hourly, weather):
                 "?::DATE AS end_date", [STUDY_START, STUDY_END])
     con.execute((SQL_DIR / "views.sql").read_text())
 
-    log("## 7. Database load")
-    for t in ["price_dam", "system_hh", "system_hourly", "weather_fc"]:
+    log("## 8. Database load")
+    for t in ["price_dam", "price_dam_hh", "price_gb", "system_hh", "system_hourly", "weather_fc"]:
         n = con.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0]
         log(f"- {t}: {n:,} rows")
     n, n_full = con.execute(
-        "SELECT COUNT(*), COUNT(*) FILTER (WHERE wind_share IS NOT NULL AND wind_all_mw IS NOT NULL "
+        "SELECT COUNT(*), COUNT(*) FILTER (WHERE price_eur_mwh IS NOT NULL AND wind_share IS NOT NULL AND wind_all_mw IS NOT NULL "
         "AND fc_wind_speed_100m IS NOT NULL) FROM hourly_panel WHERE in_study").fetchone()
     log(f"- hourly_panel, study period: {n:,} hours; {n_full:,} with price, ROI wind share, "
         f"all-island wind and forecast all present ({n_full / n:.2%})")
@@ -338,6 +462,7 @@ def main():
     hh, hourly = load_system()
     validate_against_eirgrid(hh)
     check_load_timezone(hourly)
+    check_price_physics(prices, hourly)
     weather = load_weather()
     check_forecast_vs_actual(weather, hourly)
     load_db(prices, hh, hourly, weather)
