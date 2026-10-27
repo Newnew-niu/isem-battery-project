@@ -1,4 +1,8 @@
-"""Download all-island actual wind generation and system demand (15-min) from the
+"""VALIDATION ONLY - not part of the pipeline (see docs/DECISIONS.md, D5).
+The service turned out to be too rate-limited for a full download; the few chunks fetched
+are used only to cross-check Energy-Charts timestamps in build_db.py.
+
+Download all-island actual wind generation and system demand (15-min) from the
 EirGrid Smart Grid Dashboard data service.
 
 The service is rate-limited (intermittent HTTP 503), so requests are spaced out,

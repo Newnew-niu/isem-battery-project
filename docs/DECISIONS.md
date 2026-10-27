@@ -139,34 +139,65 @@ fitted on training data only, it does not leak test-period information.
 
 ---
 
-## D5. Source for actual wind and demand: EirGrid Smart Grid Dashboard data service
+## D5. Source for actual wind and load: Energy-Charts (ENTSO-E data), validated against EirGrid
 
-**What happened.** The historical "System Data" files on `cms.eirgrid.ie` return
-HTTP 403 (Access denied) to scripted requests. We **did not** try to get around that block.
-The Smart Grid Dashboard data service (EirGrid's own public dashboard) returns 15-minute
-all-island wind and demand data without an account.
+This decision changed twice. The path is recorded because each step taught us something about
+the data.
 
-**Costs / risks.** The service is undocumented and rate-limited: it returns intermittent
-HTTP 503 errors. Its figures are operational SCADA readings and may differ slightly from
-quality-controlled settlement data.
+**Attempt 1: EirGrid "System Data" files.** `cms.eirgrid.ie` returns HTTP 403 (Access denied)
+to scripted requests. We did **not** try to get around that block.
 
-**Mitigation.** The downloader is polite: it waits between requests, backs off and retries
-on 503, and caches every response in `data/raw/`. Gaps are logged, not filled. With these
-settings the download takes several hours, about one 7-day chunk every 1–2 minutes. We chose
-to accept that rather than send requests faster.
+**Attempt 2: EirGrid Smart Grid Dashboard (SGD).**
+- *Data service.* Rate-limited. After a few 7-day chunks, almost every request returned 503,
+  even with backoff of up to 5 minutes. We stopped rather than send requests faster.
+- *Manual CSV exports from the dashboard's own button.* All-island wind exported correctly as
+  26 back-to-back 30-day windows. We found that the "month" view covers the 30 days ending on
+  `dateto` and ignores `datefrom`.
+- *Demand.* Northern Ireland and all-island demand returned "No results" for every date
+  range, including the most recent month. ROI demand worked once, then also failed.
 
-**Time convention of SGD timestamps: UTC (fixed GMT).** Evidence:
-1. On the spring DST day (2025-03-30), Irish local 01:00–01:45 does not exist, yet SGD
-   reports those four quarter-hours.
-2. On the autumn DST day (2025-10-26), local 01:00–01:45 happens twice, yet SGD reports it
-   once.
+**Attempt 3 (chosen): Energy-Charts public API** (Fraunhofer ISE), which republishes ENTSO-E
+Transparency Platform data. It needs no account and has 30-minute data for both I-SEM control
+areas:
+- `country=ie`: Republic of Ireland (EirGrid area)
+- `country=uk`: **Northern Ireland**. The returned load is about 600–1,500 MW, so this is not
+  Great Britain. Since Brexit, NI is the only UK area that still reports to ENTSO-E.
 
-A third, independent check runs in `build_db.py`. Demand follows local clocks, so in UTC the
-evening demand peak should come one hour earlier in summer than in winter. The result is
-written to `reports/data_quality_log.md`.
+**Validation: why we trust it.** `build_db.py` section 3 compares all-island wind
+(ie + uk) with the 26 EirGrid CSV exports over 35,948 overlapping half-hours. Results:
+correlation **0.998**, MAE **45 MW**, mean difference **+2.6 MW**, and the best fit is at zero
+time shift. A spot check also agrees: ROI load at 2025-01-01 00:00 UTC is 3,535.6 MW on
+Energy-Charts and 3,536 MW on the SGD data service.
 
-*Risk if wrong.* Wind and demand would be one hour out of line with prices for half the year.
-That would weaken the merit-order relationship in summer.
+**Correction to an earlier inference.** At first we concluded that SGD data-service
+timestamps were UTC. The reasoning was that the service reports local 01:00–01:45 on the
+spring DST day, when that local time does not exist. The cross-check shows this was
+**wrong**:
+- The JSON series lines up with Energy-Charts only after a −60 minute shift.
+- The CSV export, which is in Irish local time (the autumn repeated hour proves this), lines
+  up with no shift.
+
+So both SGD products use local time, and the data service apparently fills in the
+non-existent spring hour. Lesson: an inference from a single edge case is weaker than a direct
+comparison against an independent series. Energy-Charts uses Unix timestamps, so it has no
+ambiguity. A separate check confirms its time convention: the ROI evening load peak falls at
+18:00 UTC in winter and 17:00 UTC in summer, which is the expected one-hour DST shift.
+
+**Costs / risks**
+- The data comes through a second-hand publisher. Mitigation: we validated it against EirGrid,
+  as shown above.
+- *Licence.* The API documentation we could reach does not state a licence. We attribute
+  Fraunhofer ISE Energy-Charts and ENTSO-E as the sources, and the licence is still to be
+  confirmed before any redistribution. Raw files are not committed to the repo.
+- *Frozen feed.* On 2025-05-01 from 01:30 to 09:00 UTC, ROI wind and load are both flat for
+  8 hours. EirGrid's own export is flat over the same hours, which points to an upstream
+  SCADA outage. Rule applied: any value ≥ 5 MW repeated for 4 or more consecutive
+  half-hours is set to NULL. Flat near-zero wind on calm nights is real, so values below
+  5 MW are kept.
+
+EirGrid's CSV also contains a `FORECAST WIND(MW)` column. We do **not** use it as a feature,
+because the publication time (vintage) of each value is unknown and leakage cannot be ruled
+out.
 
 ---
 
@@ -192,3 +223,41 @@ by their delivery date (D).
 Only Python 3.10 is installed on the development machine. Every dependency installs and
 imports correctly on 3.10, and the code avoids 3.11-only syntax. The project brief targets
 3.11+, so moving to it is a one-line environment change if needed.
+
+---
+
+## D8. Geography: all-island wind output; wind penetration measured on ROI
+
+**What the data allow** (study period, half-hours missing):
+
+| Series | Missing |
+|---|---|
+| ROI wind | 0.30% |
+| NI wind | 1.15% |
+| ROI load | 0.33% |
+| NI load | **55%** (none at all from 23 Oct 2025; large gaps in Jan–Mar 2025) |
+
+The NI load gap comes from the original data publisher. It appears on both Energy-Charts and
+EirGrid's dashboard.
+
+**Options for the wind-penetration metric (wind ÷ demand)**
+- (A) ROI wind ÷ ROI load. *(chosen)*
+- (B) All-island wind ÷ all-island load. This would have valid values for only about 45% of
+  hours, and almost none in the second (test) year.
+- (C) All-island wind ÷ ROI load. Rejected: the numerator and denominator cover different
+  areas, so the share would be biased upward and would have no physical meaning.
+- (D) Estimate NI load by scaling ROI load. Rejected: that is synthetic data.
+
+**Why A.** It is complete, consistent and easy to interpret. ROI is about 80% of the system:
+over the study period, ROI wind averages 1,308 MW against 279 MW for NI, and ROI load averages
+3,982 MW against roughly 800 MW for NI. ROI and NI weather move together because they sit in
+the same weather systems.
+
+**Where all-island numbers are used.** Wind output in MW (`wind_all_mw` = ROI + NI) is used for
+descriptive charts and for the "perfect wind forecast" upper bound in Phase 3, because the
+price reflects wind across the whole island.
+
+**Cost.** The price is set for the whole island, but our penetration metric leaves out NI. If
+NI wind is out of step with ROI wind, the metric misses it. The main effect is extra noise in
+the merit-order relationship, which makes the estimated effect, if anything, slightly smaller
+than the true one.

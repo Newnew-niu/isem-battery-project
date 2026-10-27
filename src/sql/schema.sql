@@ -9,18 +9,25 @@ CREATE OR REPLACE TABLE price_dam (
     price_eur_mwh DOUBLE    NOT NULL      -- SEMOpx DAM clearing price (via Ember); can be negative
 );
 
-CREATE OR REPLACE TABLE system_qh (
-    ts_utc     TIMESTAMP PRIMARY KEY,     -- start of the 15-minute interval
-    wind_mw    DOUBLE,                    -- all-island actual wind generation (SCADA)
-    demand_mw  DOUBLE                     -- all-island system demand (SCADA)
+-- Actual wind and load from Energy-Charts (ENTSO-E). ROI = EirGrid area, NI = SONI area.
+CREATE OR REPLACE TABLE system_hh (
+    ts_utc       TIMESTAMP PRIMARY KEY,   -- start of the half-hour
+    wind_roi_mw  DOUBLE,
+    wind_ni_mw   DOUBLE,
+    wind_all_mw  DOUBLE,                  -- ROI + NI; NULL if either is missing
+    load_roi_mw  DOUBLE,
+    load_ni_mw   DOUBLE                   -- sparse: not published for long periods
 );
 
 CREATE OR REPLACE TABLE system_hourly (
-    ts_utc       TIMESTAMP PRIMARY KEY,
-    wind_mw      DOUBLE,                  -- mean of available quarter-hours
-    demand_mw    DOUBLE,
-    n_qh_wind    INTEGER,                 -- quarter-hours present (4 = complete)
-    n_qh_demand  INTEGER
+    ts_utc         TIMESTAMP PRIMARY KEY,
+    wind_roi_mw    DOUBLE,                -- mean of available half-hours
+    wind_ni_mw     DOUBLE,
+    wind_all_mw    DOUBLE,
+    load_roi_mw    DOUBLE,
+    load_ni_mw     DOUBLE,
+    n_hh_wind_roi  INTEGER,               -- half-hours present (2 = complete)
+    n_hh_load_roi  INTEGER
 );
 
 CREATE OR REPLACE TABLE weather_fc (

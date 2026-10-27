@@ -44,6 +44,12 @@ def window_index(freq):
     return pd.date_range(start, end, freq=freq, inclusive="left").tz_localize(None)
 
 
+def study_mask(ts_utc):
+    """True for timestamps whose trading date lies in the study period (excludes warm-up)."""
+    td = ts_utc.dt.tz_localize("UTC").dt.tz_convert(TRADING_DAY_TZ).dt.date
+    return (td >= STUDY_START) & (td <= STUDY_END)
+
+
 # ---------------------------------------------------------------- prices
 def load_prices():
     raw = pd.read_csv(RAW / "ember" / "Ireland.csv")
@@ -77,7 +83,9 @@ def load_prices():
     log(f"  All of these are last-Sunday-of-March/October DST days: {set(odd.index) == expected_odd}. "
         "EU clocks change simultaneously at 01:00 UTC, so DST trading days have 23/25 periods.")
 
-    p = w.price_eur_mwh
+    s = w[study_mask(w.ts_utc)]
+    p = s.price_eur_mwh
+    log(f"- Study period: {len(s):,} hours")
     log(f"- Price range {p.min():.2f} to {p.max():.2f} EUR/MWh; mean {p.mean():.2f}")
     log(f"- Negative-price hours: {(p < 0).sum()} ({(p < 0).mean():.2%}); "
         f"zero-price hours: {(p == 0).sum()}; hours <= 5 EUR: {(p <= 5).sum()}")
@@ -85,7 +93,7 @@ def load_prices():
     hi = q3 + 3 * (q3 - q1)
     log(f"- Hours above Q3 + 3*IQR ({hi:.1f} EUR/MWh): {(p > hi).sum()} "
         "(kept: scarcity spikes are real price signals)")
-    top = w.nlargest(5, "price_eur_mwh")[["ts_local", "price_eur_mwh"]]
+    top = s.nlargest(5, "price_eur_mwh")[["ts_local", "price_eur_mwh"]]
     log("- Five highest prices (local time): "
         + "; ".join(f"{r.ts_local:%Y-%m-%d %H:%M} {r.price_eur_mwh:.0f}" for r in top.itertuples()))
     log()
@@ -93,90 +101,152 @@ def load_prices():
 
 
 # ---------------------------------------------------------------- system data
-def load_sgd():
+EC_FIELDS = {"Wind onshore": "wind", "Load": "load"}
+EC_AREAS = {"ie": "roi", "uk": "ni"}  # Energy-Charts 'uk' = Northern Ireland (SONI area)
+
+
+def load_system():
+    """Energy-Charts half-hourly wind and load per control area -> half-hourly and hourly tables."""
     frames = []
-    for f in sorted((RAW / "sgd").glob("*.json")):
-        rows = json.loads(f.read_text())["Rows"]
-        frames.append(pd.DataFrame(rows))
+    for f in sorted((RAW / "energycharts").glob("public_power_*.json")):
+        area = EC_AREAS[f.stem.split("_")[2]]
+        j = json.loads(f.read_text())
+        ts = pd.to_datetime(j["unix_seconds"], unit="s")  # UTC, start of the half-hour
+        for p in j["production_types"]:
+            if p["name"] in EC_FIELDS:
+                frames.append(pd.DataFrame({"ts_utc": ts, "col": f"{EC_FIELDS[p['name']]}_{area}_mw",
+                                            "value": pd.to_numeric(p["data"], errors="coerce")}))
     raw = pd.concat(frames, ignore_index=True)
-    # Timestamps are UTC/GMT: on the spring DST day local 01:00-01:45 does not exist
-    # yet SGD reports it, and on the autumn day local 01:xx appears only once.
-    raw["ts_utc"] = pd.to_datetime(raw["EffectiveTime"], format="%d-%b-%Y %H:%M:%S")
-    raw["Value"] = pd.to_numeric(raw["Value"], errors="coerce")
 
-    log("## 2. Actual wind and system demand (EirGrid Smart Grid Dashboard, all-island)")
-    log(f"- Raw files: {len(frames)}; raw rows: {len(raw):,}")
-    dup = raw.duplicated(["ts_utc", "FieldName"]).sum()
-    conflict = (raw.groupby(["ts_utc", "FieldName"]).Value.nunique() > 1).sum()
-    log(f"- Duplicate (timestamp, field) rows: {dup} (conflicting values: {conflict}); "
-        "duplicates from overlapping chunk edges are dropped, first value kept")
-    raw = raw.drop_duplicates(["ts_utc", "FieldName"])
+    log("## 2. Actual wind and load (Energy-Charts / ENTSO-E, ROI and NI control areas)")
+    dup = raw.duplicated(["ts_utc", "col"]).sum()
+    log(f"- Duplicate (timestamp, series) rows: {dup}")
+    raw = raw.drop_duplicates(["ts_utc", "col"])
+    hh = raw.pivot(index="ts_utc", columns="col", values="value")
+    cols = ["wind_roi_mw", "wind_ni_mw", "load_roi_mw", "load_ni_mw"]
+    hh = hh.reindex(columns=cols)
+    idx = window_index("30min")
+    hh = hh.reindex(idx)
+    hh.index.name = "ts_utc"
+    in_study = study_mask(hh.index.to_series()).values
 
-    qh = raw.pivot(index="ts_utc", columns="FieldName", values="Value")
-    qh = qh.rename(columns={"WIND_ACTUAL": "wind_mw", "SYSTEM_DEMAND": "demand_mw"})
-    qh = qh.reindex(columns=["wind_mw", "demand_mw"])
-    idx = window_index("15min")
-    qh = qh.reindex(idx)
-    qh.index.name = "ts_utc"
+    # Frozen-feed rule: a value repeated for >= 4 consecutive half-hours (2 h) is a stuck
+    # reading, not physics - load never stays flat that long, nor does wind above calm.
+    # Values < 5 MW are exempt: flat near-zero wind on calm nights is real.
+    # Confirmed case: 2025-05-01 01:30-09:00 UTC, ROI wind and load both frozen, and EirGrid's
+    # own dashboard export is frozen over the same hours (upstream SCADA outage).
+    for col in cols:
+        s = hh[col]
+        run_id = s.ne(s.shift()).cumsum()
+        run_len = s.groupby(run_id).transform("size")
+        frozen = (run_len >= 4) & s.notna() & (s >= 5)
+        if frozen.any():
+            log(f"- {col}: {int(frozen.sum())} half-hours set to NULL as a frozen feed "
+                f"({', '.join(sorted({f'{t:%Y-%m-%d}' for t in s.index[frozen]}))})")
+        hh.loc[frozen, col] = np.nan
 
-    for col in ["wind_mw", "demand_mw"]:
-        s = qh[col]
+    log(f"- Half-hours expected in study period: {in_study.sum():,}")
+    for col in cols:
+        s = hh.loc[in_study, col]
         missing = s.index[s.isna()]
-        runs = gap_runs(missing, "15min")
-        log(f"- {col}: expected {len(idx):,} quarter-hours, missing {len(missing):,} "
-            f"({len(missing) / len(idx):.2%}) in {len(runs)} gap(s)")
+        runs = gap_runs(missing, "30min")
+        log(f"- {col}: missing {len(missing):,} ({len(missing) / len(s):.2%}) in {len(runs)} gap(s); "
+            f"range {s.min():.0f} to {s.max():.0f} MW, mean {s.mean():.0f}")
         if len(runs):
-            longest = runs.nlargest(5, "n")
+            longest = runs.nlargest(3, "n")
             log("  Longest gaps (UTC): " + "; ".join(
-                f"{r.start:%Y-%m-%d %H:%M} to {r.end:%Y-%m-%d %H:%M} ({r.n} qh)"
+                f"{r.start:%Y-%m-%d %H:%M} to {r.end:%Y-%m-%d %H:%M} ({r.n} hh)"
                 for r in longest.itertuples()))
-        log(f"  Range {s.min():.0f} to {s.max():.0f} MW; mean {s.mean():.0f}")
+    log("- NI load is not published for long stretches (from Nov 2025 entirely), so wind "
+        "penetration is measured on ROI only (wind_roi / load_roi); see DECISIONS.md D8.")
 
-    neg_wind = (qh.wind_mw < 0).sum()
-    log(f"- Negative wind readings: {neg_wind} (SCADA net export can dip below zero at "
-        "near-zero output; kept as reported)")
-    bad_demand = ((qh.demand_mw < 1500) | (qh.demand_mw > 9000)).sum()
-    log(f"- Demand outside a plausible 1,500-9,000 MW band: {bad_demand}")
-    # Frozen sensor check: identical values for >= 2 hours
-    for col in ["wind_mw", "demand_mw"]:
-        s = qh[col]
+    neg = (hh[["wind_roi_mw", "wind_ni_mw"]] < 0).sum().sum()
+    log(f"- Negative wind values: {neg}")
+    bad_load = ((hh.load_roi_mw < 1500) | (hh.load_roi_mw > 8000)).sum()
+    log(f"- ROI load outside a plausible 1,500-8,000 MW band: {bad_load}")
+    for col in ["wind_roi_mw", "load_roi_mw"]:
+        s = hh[col].dropna()
         same = s.diff().eq(0)
         streak = same.groupby((~same).cumsum()).cumsum().max()
-        log(f"- Longest run of identical consecutive {col} values: {int(streak) + 1} qh")
+        log(f"- Longest run of identical consecutive {col} values: {int(streak) + 1} half-hours "
+            "(long runs would suggest a frozen feed)")
 
-    hourly = qh.resample("h").agg(["mean", "count"])
-    hourly.columns = ["wind_mw", "n_qh_wind", "demand_mw", "n_qh_demand"]
-    # An hour with fewer than 4 quarter-hours is averaged from what exists; flagged by n_qh_*.
+    # All-island wind only where both areas are reported.
+    hh["wind_all_mw"] = hh.wind_roi_mw + hh.wind_ni_mw
+
+    agg = hh.resample("h")
+    hourly = agg.mean()
+    counts = agg.count()
+    # Hours with only one of two half-hours are kept (mean of what exists) and flagged.
+    hourly["n_hh_wind_roi"] = counts.wind_roi_mw
+    hourly["n_hh_load_roi"] = counts.load_roi_mw
+    for c in hourly.columns:
+        if c.endswith("_mw"):
+            hourly.loc[counts[c] == 0, c] = np.nan
     hourly = hourly.reset_index()
-    partial = ((hourly.n_qh_wind.between(1, 3)) | (hourly.n_qh_demand.between(1, 3))).sum()
-    log(f"- Hours built from 1-3 quarter-hours (partial, flagged via n_qh_*): {partial}")
-    for c in ["wind_mw", "demand_mw"]:
-        hourly.loc[hourly[f"n_qh_{c.split('_')[0]}"] == 0, c] = np.nan
+    partial = ((hourly.n_hh_wind_roi == 1) | (hourly.n_hh_load_roi == 1)).sum()
+    log(f"- Hours built from a single half-hour (flagged via n_hh_*): {partial}")
     log()
-    return qh.reset_index(), hourly
+    return hh.reset_index(), hourly
 
 
-def check_sgd_timezone(prices, hourly):
-    """Independent check of the SGD time convention: people's demand follows local clocks,
-    so if SGD is UTC, the hour (UTC) of the evening demand peak should be one hour earlier
-    in summer (IST = UTC+1) than in winter."""
-    log("## 3. Time-zone verification for Smart Grid Dashboard data")
-    h = hourly.dropna(subset=["demand_mw"]).copy()
-    h["month"] = h.ts_utc.dt.month
-    h["hour_utc"] = h.ts_utc.dt.hour
+def validate_against_eirgrid(hh):
+    """Cross-check Energy-Charts all-island wind with EirGrid Smart Grid Dashboard data
+    downloaded during Phase 1 (only runs if those raw files are present)."""
+    log("## 3. Cross-check against EirGrid Smart Grid Dashboard (all-island wind)")
+    ec = hh.set_index("ts_utc").wind_all_mw
+    checks = []
+    csvs = sorted((RAW / "sgd_manual").glob("*.csv"))
+    if csvs:
+        c = pd.concat(pd.read_csv(f) for f in csvs)
+        t = pd.to_datetime(c["DATE & TIME"], format="%d %B %Y %H:%M")
+        c = c.assign(t=t).drop_duplicates("t")
+        # CSV export is Irish local time; the repeated autumn hour is ambiguous -> dropped.
+        utc = (c.t.dt.tz_localize(LOCAL_TZ, ambiguous="NaT", nonexistent="NaT")
+               .dt.tz_convert("UTC").dt.tz_localize(None))
+        checks.append(("manual CSV export (local time)",
+                       pd.Series(c["ACTUAL WIND(MW)"].values, index=utc).dropna()))
+    api_files = sorted((RAW / "sgd").glob("windactual_*.json"))
+    if api_files:
+        a = pd.concat(pd.DataFrame(json.loads(f.read_text())["Rows"]) for f in api_files)
+        t = pd.to_datetime(a.EffectiveTime, format="%d-%b-%Y %H:%M:%S")
+        checks.append(("data-service JSON (timestamps read as UTC)",
+                       pd.Series(a.Value.astype(float).values, index=t)))
+    if not checks:
+        log("- EirGrid reference files not present - CHECK NOT RUN")
+        log()
+        return
+    for name, s in checks:
+        res = []
+        for off in [-60, -30, 0, 30, 60]:
+            s2 = s.copy()
+            s2.index = s2.index + pd.Timedelta(minutes=off)
+            m = pd.concat([s2.resample("30min").mean().rename("sgd"), ec], axis=1).dropna()
+            res.append((off, len(m), m.sgd.corr(m.wind_all_mw), (m.wind_all_mw - m.sgd).abs().mean(),
+                        (m.wind_all_mw - m.sgd).mean()))
+        best = max(res, key=lambda r: r[2])
+        log(f"- vs {name}: best alignment at shift {best[0]:+d} min "
+            f"(n={best[1]:,}, corr={best[2]:.4f}, MAE={best[3]:.0f} MW, mean diff={best[4]:+.1f} MW); "
+            "corr by shift: " + ", ".join(f"{r[0]:+d}: {r[2]:.3f}" for r in res))
+    log("- Interpretation: Energy-Charts (UTC) matches the local-time CSV with no shift, and "
+        "matches the data-service JSON only after a -60 min shift, i.e. the data-service "
+        "timestamps are also Irish local time, not UTC as first inferred (DECISIONS.md D5).")
+    log()
+
+
+def check_load_timezone(hourly):
+    """Demand follows local clocks, so with correct UTC timestamps the evening peak should
+    appear one hour earlier (in UTC) in summer than in winter."""
+    log("## 4. Time-zone sanity check on ROI load")
+    h = hourly.dropna(subset=["load_roi_mw"]).copy()
+    h = h[study_mask(h.ts_utc)]
     out = {}
     for label, months in [("winter (Dec-Feb)", [12, 1, 2]), ("summer (Jun-Aug)", [6, 7, 8])]:
-        prof = h[h.month.isin(months)].groupby("hour_utc").demand_mw.mean()
-        if prof.loc[14:22].empty:
-            log(f"- {label}: no demand data yet - CHECK NOT RUN")
-            log()
-            return
-        evening = prof.loc[14:22]
-        out[label] = int(evening.idxmax())
-        log(f"- {label}: evening demand peak at {out[label]:02d}:00 in SGD timestamps")
-    shift = list(out.values())[0] - list(out.values())[1]
-    verdict = ("consistent with UTC timestamps" if shift == 1
-               else "NOT the expected 1-hour shift - investigate")
+        prof = h[h.ts_utc.dt.month.isin(months)].groupby(h.ts_utc.dt.hour).load_roi_mw.mean()
+        out[label] = int(prof.loc[14:22].idxmax())
+        log(f"- {label}: evening load peak at {out[label]:02d}:00 UTC")
+    shift = out["winter (Dec-Feb)"] - out["summer (Jun-Aug)"]
+    verdict = "consistent with UTC timestamps" if shift == 1 else "NOT the expected 1-hour shift - investigate"
     log(f"- Winter minus summer peak hour = {shift} h -> {verdict}")
     log()
 
@@ -198,7 +268,7 @@ def load_weather():
     idx = window_index("h")
     df = df[df.ts_utc.isin(idx)]
 
-    log("## 4. Weather forecasts (Open-Meteo Previous Runs, 48 h-ahead vintage)")
+    log("## 5. Weather forecasts (Open-Meteo Previous Runs, 48 h-ahead vintage)")
     log(f"- Models: {', '.join(sorted(df.model.unique()))}; "
         f"locations: {', '.join(sorted(df.location.unique()))}")
     g = df.groupby(["model", "location"])
@@ -217,42 +287,44 @@ def load_weather():
 
 def check_forecast_vs_actual(weather, hourly):
     """Sanity check that the 48 h-ahead forecast carries real information about wind output."""
-    log("## 5. Forecast sanity check (descriptive only, not used for model selection)")
+    log("## 6. Forecast sanity check (descriptive only, not used for model selection)")
     w = (weather[weather.model == "ecmwf_ifs025"].groupby("ts_utc").wind_speed_100m.mean()
          .rename("fc").reset_index())
-    m = w.merge(hourly[["ts_utc", "wind_mw"]], on="ts_utc").dropna()
-    r = m.fc.corr(m.wind_mw)
-    r_cubic = (m.fc.clip(upper=13) ** 3).corr(m.wind_mw)
-    log(f"- Correlation of mean 48 h-ahead wind speed with actual all-island wind output: "
-        f"{r:.3f} (linear), {r_cubic:.3f} (capped cubic, closer to a power curve)")
+    m = w.merge(hourly[["ts_utc", "wind_all_mw"]], on="ts_utc").dropna()
+    m = m[study_mask(m.ts_utc)]
+    r = m.fc.corr(m.wind_all_mw)
+    r_cubic = (m.fc.clip(upper=13) ** 3).corr(m.wind_all_mw)
+    log(f"- Correlation of mean 48 h-ahead wind speed with actual all-island wind output "
+        f"(study period, n={len(m):,}): {r:.3f} (linear), {r_cubic:.3f} (capped cubic)")
     log()
 
 
 # ---------------------------------------------------------------- load
-def load_db(prices, qh, hourly, weather):
+def load_db(prices, hh, hourly, weather):
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     con = duckdb.connect(str(DB_PATH))
     con.execute((SQL_DIR / "schema.sql").read_text())
     con.execute("INSERT INTO price_dam SELECT ts_utc, ts_local, trading_date, price_eur_mwh "
                 "FROM prices")
-    con.execute("INSERT INTO system_qh SELECT ts_utc, wind_mw, demand_mw FROM qh")
-    con.execute("INSERT INTO system_hourly SELECT ts_utc, wind_mw, demand_mw, n_qh_wind, "
-                "n_qh_demand FROM hourly")
+    con.execute("INSERT INTO system_hh SELECT ts_utc, wind_roi_mw, wind_ni_mw, wind_all_mw, "
+                "load_roi_mw, load_ni_mw FROM hh")
+    con.execute("INSERT INTO system_hourly SELECT ts_utc, wind_roi_mw, wind_ni_mw, wind_all_mw, "
+                "load_roi_mw, load_ni_mw, n_hh_wind_roi, n_hh_load_roi FROM hourly")
     con.execute("INSERT INTO weather_fc SELECT ts_utc, model, location, wind_speed_100m, "
                 "temperature_2m FROM weather")
     con.execute("CREATE OR REPLACE TABLE study_period AS SELECT ?::DATE AS start_date, "
                 "?::DATE AS end_date", [STUDY_START, STUDY_END])
     con.execute((SQL_DIR / "views.sql").read_text())
 
-    log("## 6. Database load")
-    for t in ["price_dam", "system_qh", "system_hourly", "weather_fc"]:
+    log("## 7. Database load")
+    for t in ["price_dam", "system_hh", "system_hourly", "weather_fc"]:
         n = con.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0]
         log(f"- {t}: {n:,} rows")
     n, n_full = con.execute(
-        "SELECT COUNT(*), COUNT(*) FILTER (WHERE wind_mw IS NOT NULL AND demand_mw IS NOT NULL "
+        "SELECT COUNT(*), COUNT(*) FILTER (WHERE wind_share IS NOT NULL AND wind_all_mw IS NOT NULL "
         "AND fc_wind_speed_100m IS NOT NULL) FROM hourly_panel WHERE in_study").fetchone()
-    log(f"- hourly_panel, study period: {n:,} hours; {n_full:,} with price, actual wind, "
-        f"demand and forecast all present ({n_full / n:.2%})")
+    log(f"- hourly_panel, study period: {n:,} hours; {n_full:,} with price, ROI wind share, "
+        f"all-island wind and forecast all present ({n_full / n:.2%})")
     con.close()
 
 
@@ -263,11 +335,12 @@ def main():
         f"warm-up from {WARMUP_START}. Nothing is imputed.")
     log()
     prices = load_prices()
-    qh, hourly = load_sgd()
-    check_sgd_timezone(prices, hourly)
+    hh, hourly = load_system()
+    validate_against_eirgrid(hh)
+    check_load_timezone(hourly)
     weather = load_weather()
     check_forecast_vs_actual(weather, hourly)
-    load_db(prices, qh, hourly, weather)
+    load_db(prices, hh, hourly, weather)
     REPORTS.mkdir(exist_ok=True)
     (REPORTS / "data_quality_log.md").write_text("\n".join(log_lines) + "\n", encoding="utf-8")
 
