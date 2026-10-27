@@ -31,7 +31,7 @@ def load(con):
     act = con.execute("""SELECT ts_utc, ts_local, trading_date, price_eur_mwh AS price
                          FROM hourly_panel WHERE trading_date BETWEEN DATE '2024-10-01' AND DATE '2026-09-30'
                          ORDER BY ts_utc""").df()
-    fc = con.execute("SELECT ts_utc, model, forecast FROM price_forecast").df()
+    fc = con.execute("SELECT ts_utc, model, forecast FROM price_forecast ORDER BY ts_utc, model").df()
     fc = fc.pivot(index="ts_utc", columns="model", values="forecast")
     d = act.set_index("ts_utc").join(fc).reset_index()
     d["trading_date"] = pd.to_datetime(d.trading_date)
@@ -59,7 +59,7 @@ def run(d, b: Battery, strategies, sched):
     """Daily results for each strategy -> DataFrame (trading_date, strategy, revenue, ...)."""
     out = []
     test = d[(d.trading_date >= TEST_START) & (d.trading_date <= TEST_END)]
-    cols = ["price"] + [FORECASTS[s] for s in strategies if s in FORECASTS]
+    cols = ["price"] + list(FORECASTS.values())  # same day set for every run, so results are comparable
     for day, g in test.groupby("trading_date"):
         if g[cols].isna().any().any():
             continue
@@ -105,6 +105,15 @@ def main():
     monthly = res.assign(month=res.trading_date.dt.to_period("M").astype(str)).pivot_table(
         index="month", columns="strategy", values="revenue", aggfunc="sum")
     M["monthly_revenue_eur"] = monthly.round(0).to_dict("index")
+    t = d[(d.trading_date >= TEST_START) & (d.trading_date <= TEST_END)].dropna(subset=["price"])
+    dd = t.groupby("trading_date").price.agg(lambda x: x.max() - x.min()).rename("spread").to_frame()
+    dd["level"] = t.groupby("trading_date").price.mean()
+    mdr = dd.groupby(dd.index.to_period("M").astype(str)).mean()
+    mdr["perfect"] = monthly["perfect"]
+    M["monthly_corr_revenue_spread"] = float(mdr.perfect.corr(mdr.spread))
+    M["monthly_corr_revenue_level"] = float(mdr.perfect.corr(mdr.level))
+    M["sep26_rule_vs_forecast"] = {"rule": float(monthly.loc["2026-09", "rule"]),
+                                   "forecast": float(monthly.loc["2026-09", "forecast_lightgbm"])}
     # Revenue concentration under perfect foresight
     pf = res[res.strategy == "perfect"].revenue.sort_values(ascending=False)
     M["perfect_top10pct_days_share"] = float(pf.head(int(len(pf) * 0.1)).sum() / pf.sum())
@@ -129,7 +138,7 @@ def main():
                 sens.append({"duration_h": hours, "rte": rte, "strategy": strat,
                              "annual_eur_per_mw": r.annual_eur_per_mw, "capture_pct": r.capture_pct})
     sens = pd.DataFrame(sens)
-    M["sensitivity"] = sens.round(1).to_dict("records")
+    M["sensitivity"] = sens.round({"annual_eur_per_mw": 1, "capture_pct": 1}).to_dict("records")
 
     # Half-hourly settlement sensitivity (perfect foresight) on days with official SEMOpx data
     hh = con.execute("""SELECT h.ts_utc, h.price_eur_mwh, p.trading_date FROM price_dam_hh h
@@ -191,7 +200,8 @@ def figures(res, summ, monthly, sens, d, base):
                edgecolor=ps.SURFACE, linewidth=1.5)
     ax.set_xticks(xs, [pd.Period(m).strftime("%b %y") for m in monthly.index])
     ax.set_ylabel("EUR thousand per MW")
-    ps.titles(ax, "Monthly revenue follows the spread, not the price level",
+    ps.titles(ax, f"Monthly revenue tracks the daily spread (corr {M['monthly_corr_revenue_spread']:.2f}) "
+                  f"more than the price level ({M['monthly_corr_revenue_level']:.2f})",
               "DAM arbitrage revenue by trading month, test year")
     ax.legend(loc="upper left", ncol=3)
     fig.tight_layout()
@@ -210,7 +220,7 @@ def figures(res, summ, monthly, sens, d, base):
     ax.set_yticks(range(fs.shape[0]), [f"{h} h ({h} MWh)" for h in fs.index])
     ax.set_xlabel("Round-trip efficiency")
     ax.grid(False)
-    ps.titles(ax, "Duration matters far more than efficiency",
+    ps.titles(ax, "Revenue scales almost linearly with duration; efficiency is second-order",
               "Forecast-based strategy, EUR thousand per MW per year")
     fig.tight_layout()
     ps.save(fig, "p4_sensitivity")
@@ -234,7 +244,10 @@ def figures(res, summ, monthly, sens, d, base):
     axes[1].set_title("Schedule chosen from the forecast")
     axes[1].legend(loc="lower left", ncol=2)
     axes[1].set_xticks(x[::3], [f"{h:02d}:00" for h in g.hour.values[::3]])
-    fig.suptitle(f"A typical test day ({day:%a %d %b %Y}): charge overnight, discharge into the peak",
+    ch = [f"{h:02d}:00" for h, v in zip(g.hour.values, c) if v > 0.05]
+    dh = [f"{h:02d}:00" for h, v in zip(g.hour.values, dis) if v > 0.05]
+    fig.suptitle(f"A typical test day ({day:%a %d %b %Y}): charge at {', '.join(ch)}, "
+                 f"discharge at {', '.join(dh)}",
                  x=0.01, ha="left", fontsize=13, fontweight="semibold")
     fig.tight_layout()
     ps.save(fig, "p4_example_day")

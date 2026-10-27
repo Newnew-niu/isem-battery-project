@@ -24,7 +24,7 @@ def sql(name):
 
 def panel(study_only=True):
     q = ("SELECT h.*, g.price_eur_mwh AS gb_price FROM hourly_panel h "
-         "LEFT JOIN price_gb g USING (ts_utc)" + (" WHERE in_study" if study_only else ""))
+         "LEFT JOIN price_gb g USING (ts_utc)" + (" WHERE in_study" if study_only else "") + " ORDER BY h.ts_utc")
     d = con.execute(q).df()
     d["trading_month"] = d.trading_date.dt.to_period("M")
     d["hour"] = d.ts_local.dt.hour

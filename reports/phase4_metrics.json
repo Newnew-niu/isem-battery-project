@@ -1,0 +1,387 @@
+{
+ "rule_schedule": {
+  "winter": {
+   "charge": [
+    3,
+    4
+   ],
+   "discharge": [
+    17,
+    18
+   ]
+  },
+  "spring": {
+   "charge": [
+    13,
+    14
+   ],
+   "discharge": [
+    19,
+    20
+   ]
+  },
+  "summer": {
+   "charge": [
+    14,
+    15
+   ],
+   "discharge": [
+    19,
+    20
+   ]
+  },
+  "autumn": {
+   "charge": [
+    3,
+    4
+   ],
+   "discharge": [
+    17,
+    18
+   ]
+  }
+ },
+ "base_case": {
+  "battery": {
+   "power_mw": 1.0,
+   "energy_mwh": 2.0,
+   "rte": 0.88,
+   "soc_min_frac": 0.05,
+   "soc_max_frac": 0.95,
+   "cycles_per_day": 1.0
+  },
+  "summary": {
+   "forecast_lightgbm": {
+    "days": 359,
+    "annual_eur_per_mw": 45138.32,
+    "capture_pct": 79.8,
+    "cycles_per_year": 365.0,
+    "loss_days": 9
+   },
+   "forecast_linear": {
+    "days": 359,
+    "annual_eur_per_mw": 42606.72,
+    "capture_pct": 75.32,
+    "cycles_per_year": 365.0,
+    "loss_days": 15
+   },
+   "forecast_naive": {
+    "days": 359,
+    "annual_eur_per_mw": 33985.75,
+    "capture_pct": 60.08,
+    "cycles_per_year": 365.0,
+    "loss_days": 41
+   },
+   "perfect": {
+    "days": 359,
+    "annual_eur_per_mw": 56567.73,
+    "capture_pct": 100.0,
+    "cycles_per_year": 365.0,
+    "loss_days": 0
+   },
+   "rule": {
+    "days": 359,
+    "annual_eur_per_mw": 39652.86,
+    "capture_pct": 70.1,
+    "cycles_per_year": 365.0,
+    "loss_days": 12
+   }
+  }
+ },
+ "value_of_forecasting_eur_per_mw": 5485.466617847218,
+ "value_of_ml_over_naive_eur_per_mw": 11152.575260356265,
+ "days_in_backtest": 359,
+ "monthly_revenue_eur": {
+  "2025-10": {
+   "forecast_lightgbm": 4261.0,
+   "forecast_linear": 3859.0,
+   "forecast_naive": 3089.0,
+   "perfect": 5274.0,
+   "rule": 3324.0
+  },
+  "2025-11": {
+   "forecast_lightgbm": 5429.0,
+   "forecast_linear": 5611.0,
+   "forecast_naive": 4606.0,
+   "perfect": 5977.0,
+   "rule": 5486.0
+  },
+  "2025-12": {
+   "forecast_lightgbm": 3340.0,
+   "forecast_linear": 3431.0,
+   "forecast_naive": 2720.0,
+   "perfect": 4197.0,
+   "rule": 3565.0
+  },
+  "2026-01": {
+   "forecast_lightgbm": 3631.0,
+   "forecast_linear": 3779.0,
+   "forecast_naive": 3474.0,
+   "perfect": 4288.0,
+   "rule": 3604.0
+  },
+  "2026-02": {
+   "forecast_lightgbm": 2509.0,
+   "forecast_linear": 2424.0,
+   "forecast_naive": 1831.0,
+   "perfect": 3015.0,
+   "rule": 2187.0
+  },
+  "2026-03": {
+   "forecast_lightgbm": 4259.0,
+   "forecast_linear": 3736.0,
+   "forecast_naive": 2650.0,
+   "perfect": 5351.0,
+   "rule": 3252.0
+  },
+  "2026-04": {
+   "forecast_lightgbm": 3176.0,
+   "forecast_linear": 2664.0,
+   "forecast_naive": 2676.0,
+   "perfect": 4933.0,
+   "rule": 3252.0
+  },
+  "2026-05": {
+   "forecast_lightgbm": 2525.0,
+   "forecast_linear": 1938.0,
+   "forecast_naive": 1584.0,
+   "perfect": 3207.0,
+   "rule": 2111.0
+  },
+  "2026-06": {
+   "forecast_lightgbm": 3694.0,
+   "forecast_linear": 3349.0,
+   "forecast_naive": 2757.0,
+   "perfect": 4565.0,
+   "rule": 3636.0
+  },
+  "2026-07": {
+   "forecast_lightgbm": 3115.0,
+   "forecast_linear": 2643.0,
+   "forecast_naive": 2738.0,
+   "perfect": 4211.0,
+   "rule": 3200.0
+  },
+  "2026-08": {
+   "forecast_lightgbm": 3203.0,
+   "forecast_linear": 3171.0,
+   "forecast_naive": 2837.0,
+   "perfect": 3961.0,
+   "rule": 3424.0
+  },
+  "2026-09": {
+   "forecast_lightgbm": 5255.0,
+   "forecast_linear": 5301.0,
+   "forecast_naive": 2464.0,
+   "perfect": 6657.0,
+   "rule": 1960.0
+  }
+ },
+ "monthly_corr_revenue_spread": 0.930005555885733,
+ "monthly_corr_revenue_level": 0.21661250006985736,
+ "sep26_rule_vs_forecast": {
+  "rule": 1960.1771297394437,
+  "forecast": 5254.69700091407
+ },
+ "perfect_top10pct_days_share": 0.2178881065996399,
+ "forecast_daily_capture_median_pct": 86.90659141996197,
+ "forecast_loss_days": 9,
+ "y1_perfect_annual_eur_per_mw": 59690.96859584633,
+ "sensitivity": [
+  {
+   "duration_h": 1,
+   "rte": 0.8,
+   "strategy": "forecast_lightgbm",
+   "annual_eur_per_mw": 18680.1,
+   "capture_pct": 73.9
+  },
+  {
+   "duration_h": 1,
+   "rte": 0.8,
+   "strategy": "perfect",
+   "annual_eur_per_mw": 25283.5,
+   "capture_pct": 100.0
+  },
+  {
+   "duration_h": 1,
+   "rte": 0.8,
+   "strategy": "rule",
+   "annual_eur_per_mw": 14832.0,
+   "capture_pct": 58.7
+  },
+  {
+   "duration_h": 1,
+   "rte": 0.88,
+   "strategy": "forecast_lightgbm",
+   "annual_eur_per_mw": 23113.5,
+   "capture_pct": 77.6
+  },
+  {
+   "duration_h": 1,
+   "rte": 0.88,
+   "strategy": "perfect",
+   "annual_eur_per_mw": 29767.6,
+   "capture_pct": 100.0
+  },
+  {
+   "duration_h": 1,
+   "rte": 0.88,
+   "strategy": "rule",
+   "annual_eur_per_mw": 19132.5,
+   "capture_pct": 64.3
+  },
+  {
+   "duration_h": 1,
+   "rte": 0.92,
+   "strategy": "forecast_lightgbm",
+   "annual_eur_per_mw": 25185.6,
+   "capture_pct": 79.0
+  },
+  {
+   "duration_h": 1,
+   "rte": 0.92,
+   "strategy": "perfect",
+   "annual_eur_per_mw": 31881.4,
+   "capture_pct": 100.0
+  },
+  {
+   "duration_h": 1,
+   "rte": 0.92,
+   "strategy": "rule",
+   "annual_eur_per_mw": 21153.9,
+   "capture_pct": 66.4
+  },
+  {
+   "duration_h": 2,
+   "rte": 0.8,
+   "strategy": "forecast_lightgbm",
+   "annual_eur_per_mw": 36298.4,
+   "capture_pct": 76.0
+  },
+  {
+   "duration_h": 2,
+   "rte": 0.8,
+   "strategy": "perfect",
+   "annual_eur_per_mw": 47777.3,
+   "capture_pct": 100.0
+  },
+  {
+   "duration_h": 2,
+   "rte": 0.8,
+   "strategy": "rule",
+   "annual_eur_per_mw": 30780.0,
+   "capture_pct": 64.4
+  },
+  {
+   "duration_h": 2,
+   "rte": 0.88,
+   "strategy": "forecast_lightgbm",
+   "annual_eur_per_mw": 45138.3,
+   "capture_pct": 79.8
+  },
+  {
+   "duration_h": 2,
+   "rte": 0.88,
+   "strategy": "perfect",
+   "annual_eur_per_mw": 56567.7,
+   "capture_pct": 100.0
+  },
+  {
+   "duration_h": 2,
+   "rte": 0.88,
+   "strategy": "rule",
+   "annual_eur_per_mw": 39652.9,
+   "capture_pct": 70.1
+  },
+  {
+   "duration_h": 2,
+   "rte": 0.92,
+   "strategy": "forecast_lightgbm",
+   "annual_eur_per_mw": 49262.7,
+   "capture_pct": 81.2
+  },
+  {
+   "duration_h": 2,
+   "rte": 0.92,
+   "strategy": "perfect",
+   "annual_eur_per_mw": 60705.5,
+   "capture_pct": 100.0
+  },
+  {
+   "duration_h": 2,
+   "rte": 0.92,
+   "strategy": "rule",
+   "annual_eur_per_mw": 43727.3,
+   "capture_pct": 72.0
+  },
+  {
+   "duration_h": 4,
+   "rte": 0.8,
+   "strategy": "forecast_lightgbm",
+   "annual_eur_per_mw": 66419.0,
+   "capture_pct": 78.2
+  },
+  {
+   "duration_h": 4,
+   "rte": 0.8,
+   "strategy": "perfect",
+   "annual_eur_per_mw": 84923.3,
+   "capture_pct": 100.0
+  },
+  {
+   "duration_h": 4,
+   "rte": 0.8,
+   "strategy": "rule",
+   "annual_eur_per_mw": 30780.0,
+   "capture_pct": 36.2
+  },
+  {
+   "duration_h": 4,
+   "rte": 0.88,
+   "strategy": "forecast_lightgbm",
+   "annual_eur_per_mw": 83617.2,
+   "capture_pct": 82.2
+  },
+  {
+   "duration_h": 4,
+   "rte": 0.88,
+   "strategy": "perfect",
+   "annual_eur_per_mw": 101710.2,
+   "capture_pct": 100.0
+  },
+  {
+   "duration_h": 4,
+   "rte": 0.88,
+   "strategy": "rule",
+   "annual_eur_per_mw": 41409.2,
+   "capture_pct": 40.7
+  },
+  {
+   "duration_h": 4,
+   "rte": 0.92,
+   "strategy": "forecast_lightgbm",
+   "annual_eur_per_mw": 91578.4,
+   "capture_pct": 83.5
+  },
+  {
+   "duration_h": 4,
+   "rte": 0.92,
+   "strategy": "perfect",
+   "annual_eur_per_mw": 109611.8,
+   "capture_pct": 100.0
+  },
+  {
+   "duration_h": 4,
+   "rte": 0.92,
+   "strategy": "rule",
+   "annual_eur_per_mw": 46723.8,
+   "capture_pct": 42.6
+  }
+ ],
+ "half_hourly": {
+  "days": 337,
+  "hourly_annual": 56020.57133124628,
+  "half_hourly_annual": 56316.712721723496,
+  "uplift_pct": 0.5286297219750713
+ }
+}

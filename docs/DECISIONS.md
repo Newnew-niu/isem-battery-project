@@ -206,12 +206,12 @@ out.
 All series are joined on UTC timestamps. A `local_time` column (Europe/Dublin) is kept for
 behavioural analysis such as peak hours.
 
-**Trading day.** The Ember file starts at 2018-10-01 23:00 local time and every daily block
-ends at 22:00–23:00 local. This fits the I-SEM day-ahead trading day running from 23:00 to
-23:00 Irish time, which is 00:00–24:00 CET. "Daily" quantities that relate to the day-ahead
-auction are therefore computed per trading day: the battery's daily optimisation, the daily
-price spread, and the forecast target. *Status: inferred from the data. To be confirmed
-against a SEMOpx document.*
+**Trading day.** The official SEMOpx result files settle this directly. The auction on D-1
+covers delivery periods from 23:00 UTC on D-1 to 22:30 UTC on D in winter, which is 23:00 to
+23:00 Irish local time, or 00:00 to 24:00 CET. "Daily" quantities tied to the day-ahead auction
+are therefore computed per trading day: the battery's daily optimisation, the daily spread and
+the forecast target. *(Our first version inferred this from Ember's first row. That inference
+was only right by coincidence, because Ember's timestamps turned out to be 24 hours late; see D9.)*
 
 **Cost.** Commercial colleagues tend to think in calendar days, so charts label trading days
 by their delivery date (D).
@@ -261,3 +261,74 @@ price reflects wind across the whole island.
 NI wind is out of step with ROI wind, the metric misses it. The main effect is extra noise in
 the merit-order relationship, which makes the estimated effect, if anything, slightly smaller
 than the true one.
+
+---
+
+## D9. Price data: Ember is labelled 24 h late and has flat-price days; corrected with official SEMOpx files
+
+**How it was found.** The Phase 2 daily-spread chart showed a month (July 2023) with a median
+spread of zero. That cannot happen in a real day-ahead market. Following it up uncovered two
+separate problems with the Ember Ireland series.
+
+**Problem 1: flat-price days.** On 54 trading days, every hour carries the same price. Most
+fall on the last day of a month. In the study period this affects 19 days. The official
+SEMOpx files for those days show normal intraday variation (for example 1 to 237 EUR/MWh),
+so the flat days are a processing artefact, not market outcomes.
+
+**Problem 2: a 24-hour timestamp offset across the whole series.** We downloaded 363 official
+SEMOpx day-ahead result files through SEMOpx's public report API (no account needed; it keeps
+about 12 months, here 2025-10-28 to 2026-10-26). Comparing them with Ember gave:
+
+| Shift applied to Ember | Correlation with SEMOpx | Exact match |
+|---|---|---|
+| +0 h | 0.53 | 0.1% |
+| **−24 h** | **0.99** | **96.5% (100% after removing flat days)** |
+| −48 h / +24 h | 0.53 / 0.42 | ≈0% |
+
+Two independent checks confirm the direction and size of the shift:
+- **Physics.** The corrected price co-moves most strongly with *same-hour* ROI net load
+  (correlation 0.65). Shifted by ±24 h, the correlation falls to 0.36 / 0.32. The pattern holds
+  in Year 1, where no SEMOpx files exist (0.67 corrected vs 0.35 uncorrected), so the offset is
+  not limited to the recent period.
+- **Calendar.** Uncorrected, Ember's cheapest days fall on "Sunday and Monday". Corrected, they
+  fall on Saturday and Sunday, as they should. The GB series from the same Ember file does not
+  have the problem: it lines up at 0 h and its weekend dip is on Saturday and Sunday.
+- **Bonus.** After correction, the first row of the series falls exactly on trading day
+  2018-10-01, the day I-SEM went live.
+
+We also learned that **the DAM clears in 30-minute periods**. Ember's hourly value equals the
+*first* half-hour of each hour; it is not the hourly average.
+
+**What we did**
+1. Shifted the whole Ember Ireland series by −24 h. This is a mechanical relabelling, not an
+   estimate.
+2. Replaced flat days with the official SEMOpx price where it exists (12 days in the study
+   period), using Ember's own definition (first half-hour) so the series stays consistent.
+3. Set the 7 Year-1 flat days with no official data to NULL, and excluded them from all
+   analysis and the backtest. Each hour carries a `price_source` column (`ember`, `semopx`
+   or `missing`).
+4. Stored the full half-hourly SEMOpx data separately (`price_dam_hh`) for a 30-minute battery
+   sensitivity check.
+
+**Options considered and rejected**
+- *Use only SEMOpx.* It covers only about 11 of the 24 study months, so there would be no
+  training year.
+- *Use the hourly average of half-hours instead of the first half-hour.* That would be more
+  representative of a 1 MW hourly position, but it is unavailable before October 2025. Mixing
+  two definitions across the training and test years would introduce a break in the series.
+  We keep Ember's definition throughout and measure the half-hourly effect separately in
+  Phase 4.
+
+**Impact: why this matters.** Before the correction, the Phase 2 merit-order slope was
+−5 EUR/MWh per 10 points of wind penetration, and wind explained 4% of price variation. After
+the correction, the slope is **−15** and wind explains **27%**. A one-day misalignment had
+quietly removed most of the relationship between wind and price, and the conclusion
+"I-SEM's merit-order effect is weak" would have been wrong. We had also started building a
+story about prices "reacting to forecast rather than actual wind" on 14 Dec 2024. It turned
+out to be an artefact of the same offset and was dropped before it reached any report.
+**Lesson: validate the key series against the primary source before interpreting
+relationships, especially when a result looks surprising.**
+
+**Residual risk.** The Year-1 correction rests on the physical and calendar checks, not on an
+exact match against official data, because SEMOpx no longer publishes that period. The
+evidence is consistent across checks, but it is not byte-level proof.

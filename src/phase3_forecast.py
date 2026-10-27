@@ -43,8 +43,9 @@ def load(con):
                h.wind_all_mw, h.wind_share, g.price_eur_mwh AS gb
         FROM hourly_panel h LEFT JOIN price_gb g USING (ts_utc)
         WHERE h.trading_date >= DATE '2024-09-01' AND h.trading_date <= DATE '2026-09-30'
+        ORDER BY h.ts_utc
     """).df()
-    w = con.execute("SELECT ts_utc, model, location, wind_speed_100m AS ws, temperature_2m AS t FROM weather_fc").df()
+    w = con.execute("SELECT ts_utc, model, location, wind_speed_100m AS ws, temperature_2m AS t FROM weather_fc ORDER BY ts_utc, model, location").df()
     return p, w
 
 
@@ -96,7 +97,7 @@ PRICE_LAGS = ["p_lag1", "p_lag2", "p_lag7", "p_d1_mean", "p_d1_max", "p_d1_min",
 WIND_FC = ["ws_mean", "ws_cubed", "ws_day_mean", "temp_mean"] + [f"ws_{l}" for l in LOCS]
 WIND_ACT = ["act_wind", "act_wind_day_mean", "temp_mean"]
 FEATS_LGB = CAL + PRICE_LAGS + WIND_FC
-FEATS_LGB_PERFECT = CAL + PRICE_LAGS + WIND_ACT
+FEATS_LGB_PERFECT = FEATS_LGB + ["act_wind", "act_wind_day_mean"]  # forecast info PLUS actual wind
 
 
 def linear_design(d):
@@ -115,26 +116,39 @@ LGB_GRID = [dict(num_leaves=nl, learning_rate=lr, min_child_samples=mcs)
             for nl in (15, 31, 63) for lr in (0.03, 0.06) for mcs in (20, 60)]
 
 
+def target(df, mode):
+    return df.price - df.p_d1_mean if mode == "delta" else df.price
+
+
+def untarget(pred, df, mode):
+    return pred + df.p_d1_mean.values if mode == "delta" else pred
+
+
 def lgb_fit(X, y, params, n_estimators):
     m = lgb.LGBMRegressor(objective="l1", n_estimators=n_estimators, subsample=0.8, subsample_freq=1,
-                          colsample_bytree=0.8, random_state=SEED, verbose=-1, **params)
+                          colsample_bytree=0.8, random_state=SEED, verbose=-1, deterministic=True, force_row_wise=True, n_jobs=4, **params)
     return m.fit(X, y)
 
 
 def select_lgb(d, feats):
-    """Pick hyperparameters on the Year-1 inner validation window (Jul-Sep 2025) only."""
-    tr = d[(d.td < VAL_START)].dropna(subset=["price"])
-    va = d[(d.td >= VAL_START) & (d.td < TEST_START)].dropna(subset=["price"])
-    best = None
-    for prm in LGB_GRID:
-        m = lgb.LGBMRegressor(objective="l1", n_estimators=3000, subsample=0.8, subsample_freq=1,
-                              colsample_bytree=0.8, random_state=SEED, verbose=-1, **prm)
-        m.fit(tr[feats], tr.price, eval_set=[(va[feats], va.price)], eval_metric="l1",
-              callbacks=[lgb.early_stopping(100, verbose=False)])
-        mae = np.abs(m.predict(va[feats], num_iteration=m.best_iteration_) - va.price).mean()
-        if best is None or mae < best[0]:
-            best = (mae, prm, m.best_iteration_)
-    return {"val_mae": best[0], "params": best[1], "n_estimators": int(best[2])}
+    """Pick hyperparameters AND the target form on the Year-1 inner validation window
+    (Jul-Sep 2025) only - the test year is never used for any choice."""
+    tr = d[(d.td < VAL_START)].dropna(subset=["price", "p_d1_mean"])
+    va = d[(d.td >= VAL_START) & (d.td < TEST_START)].dropna(subset=["price", "p_d1_mean"])
+    best, by_mode = None, {}
+    for mode in ("raw", "delta"):
+        for prm in LGB_GRID:
+            m = lgb.LGBMRegressor(objective="l1", n_estimators=3000, subsample=0.8, subsample_freq=1,
+                                  colsample_bytree=0.8, random_state=SEED, verbose=-1, deterministic=True, force_row_wise=True, n_jobs=4, **prm)
+            m.fit(tr[feats], target(tr, mode), eval_set=[(va[feats], target(va, mode))], eval_metric="l1",
+                  callbacks=[lgb.early_stopping(100, verbose=False)])
+            pred = untarget(m.predict(va[feats], num_iteration=m.best_iteration_), va, mode)
+            mae = np.abs(pred - va.price).mean()
+            by_mode[mode] = min(by_mode.get(mode, np.inf), mae)
+            if best is None or mae < best[0]:
+                best = (mae, prm, m.best_iteration_, mode)
+    return {"val_mae": best[0], "params": best[1], "n_estimators": int(best[2]), "target": best[3],
+            "val_mae_by_target": by_mode}
 
 
 def walk_forward(d, fit_predict):
@@ -177,15 +191,31 @@ def main():
     pred["naive_d1"] = d.loc[test_mask, "p_lag1"]
     pred["naive_d7"] = d.loc[test_mask, "p_lag7"]
 
-    def ols_fp(train, test):
-        Xtr = linear_design(train)
-        ok = Xtr.notna().all(axis=1)
-        fit = sm.OLS(train.price[ok], Xtr[ok]).fit()
-        Xte = linear_design(test).reindex(columns=Xtr.columns, fill_value=0)
-        return fit.predict(Xte)
+    def ols_fp_mode(mode):
+        def fp(train, test):
+            train = train.dropna(subset=["p_d1_mean"])
+            Xtr = linear_design(train)
+            ok = Xtr.notna().all(axis=1)
+            fit = sm.OLS(target(train, mode)[ok], Xtr[ok]).fit()
+            Xte = linear_design(test).reindex(columns=Xtr.columns, fill_value=0)
+            return untarget(fit.predict(Xte).values, test, mode)
+        return fp
+
+    # Linear target form chosen on the same Year-1 validation window
+    y1 = d[(d.td >= "2024-10-01") & (d.td < TEST_START)]
+    tr_, va_ = y1[y1.td < VAL_START].dropna(subset=["price"]), y1[y1.td >= VAL_START]
+    lin_val = {m: float(np.nanmean(np.abs(ols_fp_mode(m)(tr_, va_) - va_.price.values))) for m in ("raw", "delta")}
+    # Identical in theory (p_d1_mean is a regressor); prefer the simpler raw form on ties
+    lin_mode = "raw" if lin_val["raw"] <= lin_val["delta"] + 1e-6 else "delta"
+    M["linear_selection"] = {"val_mae_by_target": lin_val, "target": lin_mode}
+    ols_fp = ols_fp_mode(lin_mode)
 
     def lgb_fp(feats, s):
-        return lambda train, test: lgb_fit(train[feats], train.price, s["params"], s["n_estimators"]).predict(test[feats])
+        def fp(train, test):
+            train = train.dropna(subset=["p_d1_mean"])
+            m = lgb_fit(train[feats], target(train, s["target"]), s["params"], s["n_estimators"])
+            return untarget(m.predict(test[feats]), test, s["target"])
+        return fp
 
     dd = d[d.td >= "2024-10-01"]
     pred["linear"] = walk_forward(dd, ols_fp)
@@ -207,13 +237,13 @@ def main():
     M["overall"] = {m: errs(common[m] - common.price) for m in models}
     base = M["overall"]["naive_d1"]["MAE"]
     M["mae_vs_naive_d1_pct"] = {m: 100 * (1 - M["overall"][m]["MAE"] / base) for m in models}
-    M["by_hour_mae"] = {m: common.groupby("hour").apply(lambda g: np.abs(g[m] - g.price).mean()).round(2).to_dict()
+    M["by_hour_mae"] = {m: common.groupby("hour")[[m, "price"]].apply(lambda g: np.abs(g[m] - g.price).mean()).round(2).to_dict()
                         for m in models}
     bands = pd.cut(common.wind_share, [0, .2, .4, .6, 10], labels=["<20%", "20-40%", "40-60%", "60%+"], right=False)
-    M["by_wind_band_mae"] = {m: common.groupby(bands, observed=True).apply(lambda g: np.abs(g[m] - g.price).mean()).round(2).to_dict()
+    M["by_wind_band_mae"] = {m: common.groupby(bands, observed=True)[[m, "price"]].apply(lambda g: np.abs(g[m] - g.price).mean()).round(2).to_dict()
                              for m in models}
     M["by_wind_band_n"] = common.groupby(bands, observed=True).size().to_dict()
-    M["by_month_mae"] = {m: common.groupby(common.td.dt.to_period("M").astype(str)).apply(
+    M["by_month_mae"] = {m: common.groupby(common.td.dt.to_period("M").astype(str))[[m, "price"]].apply(
         lambda g: np.abs(g[m] - g.price).mean()).round(1).to_dict() for m in ["naive_d1", "linear", "lightgbm"]}
     # Bias: does the model systematically under/over-forecast in the rising-price test year?
     M["mean_error"] = {m: float((common[m] - common.price).mean()) for m in models}
@@ -221,12 +251,13 @@ def main():
     # Feature importance: final model trained on everything before the last test month
     last = pd.Timestamp("2026-09-01")
     trf = dd[dd.td < last].dropna(subset=["price"])
-    mf = lgb_fit(trf[FEATS_LGB], trf.price, sel["params"], sel["n_estimators"])
+    trf = trf.dropna(subset=["p_d1_mean"])
+    mf = lgb_fit(trf[FEATS_LGB], target(trf, sel["target"]), sel["params"], sel["n_estimators"])
     gain = pd.Series(mf.booster_.feature_importance("gain"), index=FEATS_LGB)
     M["lgb_gain_share"] = (gain / gain.sum()).sort_values(ascending=False).round(4).to_dict()
     Xl = linear_design(trf)
     ok = Xl.notna().all(axis=1)
-    fl = sm.OLS(trf.price[ok], Xl[ok]).fit()
+    fl = sm.OLS(target(trf, lin_mode)[ok], Xl[ok]).fit()
     keep = PRICE_LAGS + ["ws_mean", "ws_mean_sq", "ws_cubed", "ws_day_mean", "ws_x_peak", "temp_mean", "holiday"]
     M["linear_coefs"] = {k: {"coef": float(fl.params[k]), "t": float(fl.tvalues[k])} for k in keep}
 
@@ -240,7 +271,7 @@ def main():
     figures(common, models)
     (REPORTS / "phase3_metrics.json").write_text(json.dumps(M, indent=1, default=float))
     print(json.dumps({k: M[k] for k in ["overall", "mae_vs_naive_d1_pct", "mean_error", "d4_location_check",
-                                        "lgb_selection", "test_rows_common"]}, indent=1, default=float))
+                                        "lgb_selection", "lgb_selection_perfect", "linear_selection", "test_rows_common"]}, indent=1, default=float))
 
 
 LABELS = {"naive_d1": "Naive: same hour yesterday", "naive_d7": "Naive: same hour last week",
@@ -275,7 +306,8 @@ def figures(c, models):
     ax.set_xticks([0, 6, 12, 18, 23])
     ax.set_xlabel("Hour (Irish local time)")
     ax.set_ylabel("MAE (EUR/MWh)")
-    ps.titles(ax, "Errors are largest in the evening peak", "Test year, mean absolute error by delivery hour")
+    worst = max(M["by_hour_mae"]["lightgbm"], key=M["by_hour_mae"]["lightgbm"].get)
+    ps.titles(ax, f"Errors peak in the morning ramp (worst hour {worst:02d}:00)", "Test year, mean absolute error by delivery hour")
     ax.legend(loc="upper left")
     fig.tight_layout()
     ps.save(fig, "p3_mae_by_hour")
@@ -291,9 +323,10 @@ def figures(c, models):
     ax.set_xticks(xs, [f"{b}\n(n={M['by_wind_band_n'][b]:,})" for b in bands])
     ax.set_xlabel("Actual ROI wind penetration")
     ax.set_ylabel("MAE (EUR/MWh)")
-    ps.titles(ax, "Wind information matters most when wind is low",
+    ps.titles(ax, "The model's edge over naive grows with wind penetration",
               "Test year, mean absolute error by wind-penetration band")
-    ax.legend(loc="upper right")
+    ax.set_ylim(0, max(M["by_wind_band_mae"]["naive_d1"].values()) * 1.3)
+    ax.legend(loc="upper left", ncol=3)
     fig.tight_layout()
     ps.save(fig, "p3_mae_by_wind_band")
 
