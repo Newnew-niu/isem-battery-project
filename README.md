@@ -20,6 +20,7 @@ Every number above is produced by code in `src/` and stored in `reports/phase*_m
 
 | File | What it is |
 |---|---|
+| [`reports/showcase.html`](reports/showcase.html) | One-page visual case study of the whole project (open in a browser) |
 | [`reports/ISEM_market_summary.xlsx`](reports/ISEM_market_summary.xlsx) | Trader-facing workbook: KPI summary (live formulas), monthly price stats, hour x month heatmap, battery revenue by strategy with native charts, forecast accuracy |
 | [`reports/market_commentary.md`](reports/market_commentary.md) / [`.pdf`](reports/market_commentary.pdf) | Monthly market note for commercial and finance colleagues (September 2026) |
 | [`reports/phase2_market_analysis.md`](reports/phase2_market_analysis.md) | Market analysis: price shape, merit order, low prices, spreads, event study |
